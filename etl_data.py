@@ -400,9 +400,14 @@ def clean_with_business_rules(df):
         if col in df.columns:
             df[col] = df[col].interpolate().ffill().bfill()
 
-    if "Failure_Within_7_Days" in df.columns and "predicted_failure_probability" in df.columns:
-        df["Failure_Within_7_Days"] = df["predicted_failure_probability"] >= 0.7
-
+    if "Failure_Within_7_Days" in df.columns:
+        df["Failure_Within_7_Days"] = (
+        df["Failure_Within_7_Days"]
+        .ffill()
+        .bfill()
+        .fillna(0)
+        .astype(int)
+    )
     for col in [
         "maintenance_event_id",
         "maintenance_type",
@@ -574,8 +579,25 @@ scada = pd.DataFrame({
     "AI_Override_Events": np.random.randint(0, 4, n)
 })
 
-scada["Failure_Within_7_Days"] = scada["predicted_failure_probability"] >= 0.7
+# Score métier de risque de panne
+failure_score = (
+    (scada["Vibration_mms"] > 2.6).astype(int)
+    + (scada["Temperature_C"] > 68).astype(int)
+    + (scada["Oil_Level_pct"] < 78).astype(int)
+    + (scada["Coolant_Level_pct"] < 72).astype(int)
+    + (scada["Hydraulic_Pressure_bar"] < 115).astype(int)
+    + (scada["Error_Codes_Last_30_Days"] >= 3).astype(int)
+)
 
+# Probabilité simulée mais basée sur des signaux industriels
+scada["predicted_failure_probability"] = (
+    failure_score / 6
+).round(2)
+
+# Cible IA : panne dans les 7 jours
+scada["Failure_Within_7_Days"] = (
+    failure_score >= 3
+).astype(int)
 scada_dirty = add_missing_values(scada, 0.05)
 scada_dirty = add_outliers(
     scada_dirty,

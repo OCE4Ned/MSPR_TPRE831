@@ -1,0 +1,55 @@
+{
+    "target": "Failure_Within_7_Days",
+    "features_used": [
+        "cycle_time_sec",
+        "Temperature_C",
+        "Vibration_mms",
+        "Sound_dB",
+        "Oil_Level_pct",
+        "Coolant_Level_pct",
+        "Hydraulic_Pressure_bar",
+        "Coolant_Flow_L_min",
+        "Heat_Index",
+        "Power_Consumption_kW",
+        "Operational_Hours",
+        "Error_Codes_Last_30_Days",
+        "sensor_anomaly_score"
+    ],
+    "best_model": "RandomForestClassifier",
+    "selection_metric": "f1_score",
+    "best_f1_score": 0.8656716417910447,
+    "results": [
+        {
+            "model": "LogisticRegression",
+            "accuracy": 0.7666666666666667,
+            "precision": 0.7631578947368421,
+            "recall": 0.8529411764705882,
+            "f1_score": 0.8055555555555556,
+            "roc_auc": 0.8235294117647058
+        },
+        {
+            "model": "DecisionTreeClassifier",
+            "accuracy": 0.6333333333333333,
+            "precision": 0.6764705882352942,
+            "recall": 0.6764705882352942,
+            "f1_score": 0.6764705882352942,
+            "roc_auc": 0.6527149321266968
+        },
+        {
+            "model": "RandomForestClassifier",
+            "accuracy": 0.85,
+            "precision": 0.8787878787878788,
+            "recall": 0.8529411764705882,
+            "f1_score": 0.8656716417910447,
+            "roc_auc": 0.8863122171945701
+        },
+        {
+            "model": "GradientBoostingClassifier",
+            "accuracy": 0.8333333333333334,
+            "precision": 0.875,
+            "recall": 0.8235294117647058,
+            "f1_score": 0.8484848484848485,
+            "roc_auc": 0.8631221719457014
+        }
+    ]
+}

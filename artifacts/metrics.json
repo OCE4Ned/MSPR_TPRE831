@@ -1,0 +1,39 @@
+{
+    "rows": 300,
+    "features": [
+        "cycle_time_sec",
+        "Temperature_C",
+        "Vibration_mms",
+        "Sound_dB",
+        "Oil_Level_pct",
+        "Coolant_Level_pct",
+        "Hydraulic_Pressure_bar",
+        "Coolant_Flow_L_min",
+        "Heat_Index",
+        "Power_Consumption_kW",
+        "Operational_Hours",
+        "Error_Codes_Last_30_Days",
+        "sensor_anomaly_score"
+    ],
+    "target": "Failure_Within_7_Days",
+    "class_distribution": {
+        "0": 215,
+        "1": 85
+    },
+    "accuracy": 0.8667,
+    "precision": 0.8235,
+    "recall": 0.6667,
+    "f1_score": 0.7368,
+    "roc_auc": 0.9312,
+    "confusion_matrix": [
+        [
+            51,
+            3
+        ],
+        [
+            7,
+            14
+        ]
+    ],
+    "classification_report": "              precision    recall  f1-score   support\n\n           0       0.88      0.94      0.91        54\n           1       0.82      0.67      0.74        21\n\n    accuracy                           0.87        75\n   macro avg       0.85      0.81      0.82        75\nweighted avg       0.86      0.87      0.86        75\n"
+}
