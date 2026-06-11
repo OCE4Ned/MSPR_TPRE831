@@ -220,10 +220,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 # React
-.DS_Store
+*/.DS_Store
 .env
-/node_modules/
+/*/node_modules/
+/*/package-lock.json
 
 # React Router
-/.react-router/
-/build/
+/*/.react-router/
+/*/build/
