@@ -1,0 +1,31 @@
+services:
+  app_metier:
+    build: ${DOCKER_REGISTRY}/ia/mspr/app_metier:latest
+    ports:
+      - "${APP_METIER_PORT:}:5003"
+    depends_on:
+      - server_metier
+  server_metier:
+    build: ${DOCKER_REGISTRY}/ia/mspr/server_metier:latest
+    ports:
+      - "${SERVER_METIER_PORT}:5004"
+    environment:
+      - API_IA_URL=${API_IA_URL}
+    networks:
+      - server_metier_network
+  api_ia:
+    build: ${DOCKER_REGISTRY}/ia/mspr/api_ia:latest
+    ports:
+      - "${API_IA_PORT}:5005"
+
+networks:
+  server_metier_network:
+    driver: bridge
+
+volumes:
+  app_metier_data:
+    driver: local
+  server_metier_data:
+    driver: local
+  api_ia_data:
+    driver: local
