@@ -10,7 +10,7 @@ CLEAN_DIR = "data/clean"
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
-n = 300
+n = 10000
 
 timestamps = pd.date_range("2026-01-01 06:00:00", periods=n, freq="5min")
 
@@ -63,10 +63,7 @@ def clean_with_business_rules(df):
     # ==========================
     if "timestamp" in df.columns:
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-        ts_numeric = df["timestamp"].astype("int64")
-        ts_numeric = ts_numeric.replace(-9223372036854775808, np.nan)
-        ts_numeric = pd.Series(ts_numeric).interpolate(method="linear")
-        df["timestamp"] = pd.to_datetime(ts_numeric)
+        df["timestamp"] = df["timestamp"].interpolate(method="linear")
         df["timestamp"] = df["timestamp"].ffill().bfill()
 
     # ==========================
@@ -558,45 +555,129 @@ mes_clean.to_csv(f"{CLEAN_DIR}/mes_propre.csv", index=False)
 # SCADA / CAPTEURS
 # ============================================================
 
+machine_profiles = {
+    "M01": {"age_factor": 0.25, "base_hours": 900, "maintenance_quality": 0.85},
+    "M02": {"age_factor": 0.55, "base_hours": 1250, "maintenance_quality": 0.65},
+    "M03": {"age_factor": 0.40, "base_hours": 1100, "maintenance_quality": 0.75},
+    "M04": {"age_factor": 0.75, "base_hours": 1500, "maintenance_quality": 0.45},
+}
+
+scada_machine_ids = np.random.choice(machines, n, p=[0.25, 0.30, 0.25, 0.20])
+machine_age_factor = np.array([machine_profiles[m]["age_factor"] for m in scada_machine_ids])
+maintenance_quality = np.array([machine_profiles[m]["maintenance_quality"] for m in scada_machine_ids])
+base_hours = np.array([machine_profiles[m]["base_hours"] for m in scada_machine_ids])
+
+time_wear = np.linspace(0, 1, n)
+maintenance_effect = 1 - maintenance_quality
+random_stress = np.random.beta(2, 5, n)
+
+# Score latent entre 0 et 1 : plus il est eleve, plus la machine est degradee.
+latent_degradation = (
+    0.45 * machine_age_factor
+    + 0.25 * time_wear
+    + 0.20 * maintenance_effect
+    + 0.10 * random_stress
+    + np.random.normal(0, 0.05, n)
+)
+latent_degradation = np.clip(latent_degradation, 0, 1)
+
+operational_hours = base_hours + time_wear * 420 + latent_degradation * 180
+error_codes = np.random.poisson(0.8 + latent_degradation * 6)
+
 scada = pd.DataFrame({
     "timestamp": timestamps,
-    "machine_id": np.random.choice(machines, n),
-    "cycle_time_sec": np.random.normal(45, 5, n).round(2),
-    "Temperature_C": np.random.normal(65, 8, n).round(2),
-    "Vibration_mms": np.random.normal(2.5, 0.6, n).round(2),
-    "Sound_dB": np.random.normal(75, 5, n).round(2),
-    "Oil_Level_pct": np.random.normal(80, 8, n).round(2),
-    "Coolant_Level_pct": np.random.normal(75, 10, n).round(2),
-    "Hydraulic_Pressure_bar": np.random.normal(120, 15, n).round(2),
-    "Coolant_Flow_L_min": np.random.normal(30, 5, n).round(2),
-    "Heat_Index": np.random.normal(70, 8, n).round(2),
-    "Power_Consumption_kW": np.random.normal(45, 7, n).round(2),
-    "Operational_Hours": np.linspace(1000, 1300, n).round(2),
-    "Error_Codes_Last_30_Days": np.random.randint(0, 8, n),
-    "Remaining_Useful_Life_days": np.random.randint(10, 300, n),
-    "predicted_failure_probability": np.random.uniform(0, 1, n).round(3),
-    "sensor_anomaly_score": np.random.uniform(0, 1, n).round(3),
-    "AI_Override_Events": np.random.randint(0, 4, n)
+    "machine_id": scada_machine_ids,
+    "cycle_time_sec": np.random.normal(44 + latent_degradation * 9, 2.5, n).round(2),
+    "Temperature_C": np.random.normal(58 + latent_degradation * 25, 3.5, n).round(2),
+    "Vibration_mms": np.random.normal(1.4 + latent_degradation * 3.2, 0.35, n).round(2),
+    "Sound_dB": np.random.normal(68 + latent_degradation * 18, 3.0, n).round(2),
+    "Oil_Level_pct": np.random.normal(92 - latent_degradation * 35, 4.0, n).round(2),
+    "Coolant_Level_pct": np.random.normal(88 - latent_degradation * 32, 5.0, n).round(2),
+    "Hydraulic_Pressure_bar": np.random.normal(140 - latent_degradation * 45, 7.0, n).round(2),
+    "Coolant_Flow_L_min": np.random.normal(36 - latent_degradation * 16, 3.0, n).round(2),
+    "Heat_Index": np.random.normal(62 + latent_degradation * 25, 4.0, n).round(2),
+    "Power_Consumption_kW": np.random.normal(38 + latent_degradation * 26, 4.0, n).round(2),
+    "Operational_Hours": operational_hours.round(2),
+    "Error_Codes_Last_30_Days": error_codes,
+    "sensor_anomaly_score": np.clip(
+        np.random.normal(latent_degradation, 0.12, n),
+        0,
+        1
+    ).round(3),
+    "AI_Override_Events": np.random.poisson(0.2 + latent_degradation * 2.5),
 })
 
-# Score métier de risque de panne
-failure_score = (
-    (scada["Vibration_mms"] > 2.6).astype(int)
-    + (scada["Temperature_C"] > 68).astype(int)
-    + (scada["Oil_Level_pct"] < 78).astype(int)
-    + (scada["Coolant_Level_pct"] < 72).astype(int)
-    + (scada["Hydraulic_Pressure_bar"] < 115).astype(int)
-    + (scada["Error_Codes_Last_30_Days"] >= 3).astype(int)
+scada["flag_temperature_high"] = (scada["Temperature_C"] > 72).astype(int)
+scada["flag_vibration_high"] = (scada["Vibration_mms"] > 2.8).astype(int)
+scada["flag_sound_high"] = (scada["Sound_dB"] > 82).astype(int)
+scada["flag_oil_low"] = (scada["Oil_Level_pct"] < 72).astype(int)
+scada["flag_coolant_low"] = (scada["Coolant_Level_pct"] < 68).astype(int)
+scada["flag_pressure_low"] = (scada["Hydraulic_Pressure_bar"] < 112).astype(int)
+scada["flag_coolant_flow_low"] = (scada["Coolant_Flow_L_min"] < 24).astype(int)
+scada["flag_heat_high"] = (scada["Heat_Index"] > 78).astype(int)
+scada["flag_power_high"] = (scada["Power_Consumption_kW"] > 55).astype(int)
+scada["flag_error_codes_high"] = (scada["Error_Codes_Last_30_Days"] >= 4).astype(int)
+scada["flag_anomaly_high"] = (scada["sensor_anomaly_score"] >= 0.70).astype(int)
+
+weighted_degradation_score = (
+    scada["flag_vibration_high"] * 2.0
+    + scada["flag_temperature_high"] * 1.6
+    + scada["flag_oil_low"] * 1.5
+    + scada["flag_coolant_low"] * 1.4
+    + scada["flag_pressure_low"] * 1.4
+    + scada["flag_error_codes_high"] * 1.8
+    + scada["flag_anomaly_high"] * 1.5
+    + scada["flag_heat_high"] * 1.2
+    + scada["flag_power_high"] * 1.0
+    + scada["flag_sound_high"] * 0.8
+    + scada["flag_coolant_flow_low"] * 1.0
 )
 
-# Probabilité simulée mais basée sur des signaux industriels
-scada["predicted_failure_probability"] = (
-    failure_score / 6
-).round(2)
+max_degradation_score = 15.2
+scada["degradation_score"] = weighted_degradation_score.round(2)
+scada["degradation_rate_pct"] = (
+    weighted_degradation_score / max_degradation_score * 100
+).clip(0, 100).round(1)
 
-# Cible IA : panne dans les 7 jours
+failure_probability = (
+    0.60 * latent_degradation
+    + 0.40 * (scada["degradation_rate_pct"] / 100)
+)
+scada["predicted_failure_probability"] = np.clip(
+    failure_probability + np.random.normal(0, 0.06, n),
+    0,
+    1
+).round(3)
+
+remaining_useful_life = (
+    330
+    - latent_degradation * 230
+    - scada["degradation_rate_pct"] * 1.2
+    - scada["Error_Codes_Last_30_Days"] * 3.0
+    + np.random.normal(0, 12, n)
+)
+scada["Remaining_Useful_Life_days"] = np.clip(
+    remaining_useful_life,
+    3,
+    365
+).round(1)
+
+# Cible IA historique : panne ou besoin de maintenance critique dans les 7 jours.
 scada["Failure_Within_7_Days"] = (
-    failure_score >= 3
+    (scada["Remaining_Useful_Life_days"] <= 7)
+    | (
+        (scada["predicted_failure_probability"] >= 0.72)
+        & (scada["degradation_rate_pct"] >= 65)
+    )
+).astype(int)
+
+# Cible IA plus exploitable pour la maintenance predictive : intervention a planifier sous 45 jours.
+scada["Maintenance_Required_Within_45_Days"] = (
+    (scada["Remaining_Useful_Life_days"] <= 45)
+    | (
+        (scada["predicted_failure_probability"] >= 0.55)
+        & (scada["degradation_rate_pct"] >= 45)
+    )
 ).astype(int)
 scada_dirty = add_missing_values(scada, 0.05)
 scada_dirty = add_outliers(

@@ -1,5 +1,5 @@
 {
-    "target": "Failure_Within_7_Days",
+    "target": "Maintenance_Required_Within_45_Days",
     "features_used": [
         "cycle_time_sec",
         "Temperature_C",
@@ -15,41 +15,41 @@
         "Error_Codes_Last_30_Days",
         "sensor_anomaly_score"
     ],
-    "best_model": "RandomForestClassifier",
+    "best_model": "GradientBoostingClassifier",
     "selection_metric": "f1_score",
-    "best_f1_score": 0.8656716417910447,
+    "best_f1_score": 0.8041237113402062,
     "results": [
         {
             "model": "LogisticRegression",
-            "accuracy": 0.7666666666666667,
-            "precision": 0.7631578947368421,
-            "recall": 0.8529411764705882,
-            "f1_score": 0.8055555555555556,
-            "roc_auc": 0.8235294117647058
+            "accuracy": 0.947,
+            "precision": 0.8296943231441049,
+            "recall": 0.7392996108949417,
+            "f1_score": 0.7818930041152263,
+            "roc_auc": 0.9784887186321719
         },
         {
             "model": "DecisionTreeClassifier",
-            "accuracy": 0.6333333333333333,
-            "precision": 0.6764705882352942,
-            "recall": 0.6764705882352942,
-            "f1_score": 0.6764705882352942,
-            "roc_auc": 0.6527149321266968
+            "accuracy": 0.9335,
+            "precision": 0.7870370370370371,
+            "recall": 0.6614785992217899,
+            "f1_score": 0.718816067653277,
+            "roc_auc": 0.9475098838935508
         },
         {
             "model": "RandomForestClassifier",
-            "accuracy": 0.85,
-            "precision": 0.8787878787878788,
-            "recall": 0.8529411764705882,
-            "f1_score": 0.8656716417910447,
-            "roc_auc": 0.8863122171945701
+            "accuracy": 0.9435,
+            "precision": 0.7647058823529411,
+            "recall": 0.8093385214007782,
+            "f1_score": 0.7863894139886578,
+            "roc_auc": 0.9788403195885265
         },
         {
             "model": "GradientBoostingClassifier",
-            "accuracy": 0.8333333333333334,
-            "precision": 0.875,
-            "recall": 0.8235294117647058,
-            "f1_score": 0.8484848484848485,
-            "roc_auc": 0.8631221719457014
+            "accuracy": 0.9525,
+            "precision": 0.8552631578947368,
+            "recall": 0.7587548638132295,
+            "f1_score": 0.8041237113402062,
+            "roc_auc": 0.9834513149875768
         }
     ]
 }

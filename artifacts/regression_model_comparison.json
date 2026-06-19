@@ -1,0 +1,44 @@
+{
+    "target": "Remaining_Useful_Life_days",
+    "target_meaning": "Nombre de jours restants avant maintenance ou panne estimee",
+    "features_used": [
+        "cycle_time_sec",
+        "Temperature_C",
+        "Vibration_mms",
+        "Sound_dB",
+        "Oil_Level_pct",
+        "Coolant_Level_pct",
+        "Hydraulic_Pressure_bar",
+        "Coolant_Flow_L_min",
+        "Heat_Index",
+        "Power_Consumption_kW",
+        "Operational_Hours",
+        "Error_Codes_Last_30_Days",
+        "sensor_anomaly_score"
+    ],
+    "best_model": "GradientBoostingRegressor",
+    "selection_metric": "mae_days",
+    "best_mae_days": 16.529470812172807,
+    "degradation_rate_formula": "predicted_degradation_rate_pct = (1 - predicted_rul_days / 365) * 100",
+    "maintenance_date_formula": "recommended_maintenance_date = measurement_timestamp + predicted_rul_days",
+    "results": [
+        {
+            "model": "LinearRegression",
+            "mae_days": 18.648484732899234,
+            "rmse_days": 25.232431097766185,
+            "r2_score": 0.8289313895199593
+        },
+        {
+            "model": "RandomForestRegressor",
+            "mae_days": 17.44667620334786,
+            "rmse_days": 24.227497407335576,
+            "r2_score": 0.8422863628864576
+        },
+        {
+            "model": "GradientBoostingRegressor",
+            "mae_days": 16.529470812172807,
+            "rmse_days": 23.565001591369022,
+            "r2_score": 0.8507937268905236
+        }
+    ]
+}

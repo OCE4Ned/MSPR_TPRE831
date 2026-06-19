@@ -26,7 +26,7 @@ from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
 
 DATA_PATH = "data/clean/scada_capteurs_propre.csv"
 ARTIFACT_DIR = "artifacts"
-TARGET = "Failure_Within_7_Days"
+TARGET = "Maintenance_Required_Within_45_Days"
 
 os.makedirs(ARTIFACT_DIR, exist_ok=True)
 
