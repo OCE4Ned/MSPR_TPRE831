@@ -2,7 +2,7 @@ services:
   app_metier:
     build: ${DOCKER_REGISTRY}/ia/mspr/app_metier:latest
     ports:
-      - "${APP_METIER_PORT:}:5003"
+      - "${APP_METIER_PORT}:5003"
     depends_on:
       - server_metier
   server_metier:
@@ -11,6 +11,28 @@ services:
       - "${SERVER_METIER_PORT}:5004"
     environment:
       - API_IA_URL=${API_IA_URL}
+      - DATABASE_URL=${DATABASE_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - server_metier_network
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     networks:
       - server_metier_network
   api_ia:
@@ -28,4 +50,6 @@ volumes:
   server_metier_data:
     driver: local
   api_ia_data:
+    driver: local
+  postgres_data:
     driver: local

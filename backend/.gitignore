@@ -1,0 +1,12 @@
+# Base de donnees locale (SQLite)
+*.db
+
+# Environnement virtuel
+.venv/
+
+# Caches Python
+__pycache__/
+*.py[cod]
+
+# Variables d'environnement
+.env
