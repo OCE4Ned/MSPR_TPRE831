@@ -18,27 +18,27 @@
     ],
     "best_model": "GradientBoostingRegressor",
     "selection_metric": "mae_days",
-    "best_mae_days": 16.529470812172807,
+    "best_mae_days": 18.381058961882907,
     "degradation_rate_formula": "predicted_degradation_rate_pct = (1 - predicted_rul_days / 365) * 100",
     "maintenance_date_formula": "recommended_maintenance_date = measurement_timestamp + predicted_rul_days",
     "results": [
         {
             "model": "LinearRegression",
-            "mae_days": 18.648484732899234,
-            "rmse_days": 25.232431097766185,
-            "r2_score": 0.8289313895199593
+            "mae_days": 20.690252662500498,
+            "rmse_days": 29.780282889524706,
+            "r2_score": 0.7750974404422162
         },
         {
             "model": "RandomForestRegressor",
-            "mae_days": 17.44667620334786,
-            "rmse_days": 24.227497407335576,
-            "r2_score": 0.8422863628864576
+            "mae_days": 19.019519015662585,
+            "rmse_days": 28.493892517075736,
+            "r2_score": 0.7941075963309382
         },
         {
             "model": "GradientBoostingRegressor",
-            "mae_days": 16.529470812172807,
-            "rmse_days": 23.565001591369022,
-            "r2_score": 0.8507937268905236
+            "mae_days": 18.381058961882907,
+            "rmse_days": 28.109515977050307,
+            "r2_score": 0.7996250185229126
         }
     ]
 }

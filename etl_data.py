@@ -10,7 +10,7 @@ CLEAN_DIR = "data/clean"
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
-n = 10000
+n = 100000
 
 timestamps = pd.date_range("2026-01-01 06:00:00", periods=n, freq="5min")
 
@@ -22,17 +22,22 @@ batches = ["BATCH001", "BATCH002", "BATCH003"]
 work_orders = ["WO1001", "WO1002", "WO1003"]
 
 
-def add_missing_values(df, percent=0.05):
+def add_missing_values(df, percent=0.05, exclude_columns=None):
     df_dirty = df.copy()
+    exclude_columns = set(exclude_columns or [])
+    candidate_columns = [col for col in df_dirty.columns if col not in exclude_columns]
+
+    if not candidate_columns:
+        return df_dirty
 
     bool_cols = df_dirty.select_dtypes(include=["bool"]).columns
     df_dirty[bool_cols] = df_dirty[bool_cols].astype("object")
 
-    n_missing = int(df_dirty.size * percent)
+    n_missing = int(df_dirty.shape[0] * len(candidate_columns) * percent)
 
     for _ in range(n_missing):
         row = np.random.randint(0, df_dirty.shape[0])
-        col = np.random.choice(df_dirty.columns)
+        col = np.random.choice(candidate_columns)
         df_dirty.loc[row, col] = np.nan
 
     return df_dirty
@@ -562,14 +567,24 @@ machine_profiles = {
     "M04": {"age_factor": 0.75, "base_hours": 1500, "maintenance_quality": 0.45},
 }
 
-scada_machine_ids = np.random.choice(machines, n, p=[0.25, 0.30, 0.25, 0.20])
+scada_periods = int(np.ceil(n / len(machines)))
+scada_timestamps = pd.date_range("2026-01-01 06:00:00", periods=scada_periods, freq="5min")
+scada_index = pd.MultiIndex.from_product(
+    [scada_timestamps, machines],
+    names=["timestamp", "machine_id"],
+)
+scada_index = scada_index[:n]
+scada_n = len(scada_index)
+scada_time_wear = np.repeat(np.linspace(0, 1, scada_periods), len(machines))[:scada_n]
+scada_machine_ids = scada_index.get_level_values("machine_id").to_numpy()
+
 machine_age_factor = np.array([machine_profiles[m]["age_factor"] for m in scada_machine_ids])
 maintenance_quality = np.array([machine_profiles[m]["maintenance_quality"] for m in scada_machine_ids])
 base_hours = np.array([machine_profiles[m]["base_hours"] for m in scada_machine_ids])
 
-time_wear = np.linspace(0, 1, n)
+time_wear = scada_time_wear
 maintenance_effect = 1 - maintenance_quality
-random_stress = np.random.beta(2, 5, n)
+random_stress = np.random.beta(2, 5, scada_n)
 
 # Score latent entre 0 et 1 : plus il est eleve, plus la machine est degradee.
 latent_degradation = (
@@ -577,30 +592,30 @@ latent_degradation = (
     + 0.25 * time_wear
     + 0.20 * maintenance_effect
     + 0.10 * random_stress
-    + np.random.normal(0, 0.05, n)
+    + np.random.normal(0, 0.05, scada_n)
 )
 latent_degradation = np.clip(latent_degradation, 0, 1)
 
-operational_hours = base_hours + time_wear * 420 + latent_degradation * 180
+operational_hours = base_hours + time_wear * 720 + latent_degradation * 180
 error_codes = np.random.poisson(0.8 + latent_degradation * 6)
 
 scada = pd.DataFrame({
-    "timestamp": timestamps,
+    "timestamp": scada_index.get_level_values("timestamp"),
     "machine_id": scada_machine_ids,
-    "cycle_time_sec": np.random.normal(44 + latent_degradation * 9, 2.5, n).round(2),
-    "Temperature_C": np.random.normal(58 + latent_degradation * 25, 3.5, n).round(2),
-    "Vibration_mms": np.random.normal(1.4 + latent_degradation * 3.2, 0.35, n).round(2),
-    "Sound_dB": np.random.normal(68 + latent_degradation * 18, 3.0, n).round(2),
-    "Oil_Level_pct": np.random.normal(92 - latent_degradation * 35, 4.0, n).round(2),
-    "Coolant_Level_pct": np.random.normal(88 - latent_degradation * 32, 5.0, n).round(2),
-    "Hydraulic_Pressure_bar": np.random.normal(140 - latent_degradation * 45, 7.0, n).round(2),
-    "Coolant_Flow_L_min": np.random.normal(36 - latent_degradation * 16, 3.0, n).round(2),
-    "Heat_Index": np.random.normal(62 + latent_degradation * 25, 4.0, n).round(2),
-    "Power_Consumption_kW": np.random.normal(38 + latent_degradation * 26, 4.0, n).round(2),
+    "cycle_time_sec": np.random.normal(44 + latent_degradation * 9, 2.5, scada_n).round(2),
+    "Temperature_C": np.random.normal(58 + latent_degradation * 25, 3.5, scada_n).round(2),
+    "Vibration_mms": np.random.normal(1.4 + latent_degradation * 3.2, 0.35, scada_n).round(2),
+    "Sound_dB": np.random.normal(68 + latent_degradation * 18, 3.0, scada_n).round(2),
+    "Oil_Level_pct": np.random.normal(92 - latent_degradation * 35, 4.0, scada_n).round(2),
+    "Coolant_Level_pct": np.random.normal(88 - latent_degradation * 32, 5.0, scada_n).round(2),
+    "Hydraulic_Pressure_bar": np.random.normal(140 - latent_degradation * 45, 7.0, scada_n).round(2),
+    "Coolant_Flow_L_min": np.random.normal(36 - latent_degradation * 16, 3.0, scada_n).round(2),
+    "Heat_Index": np.random.normal(62 + latent_degradation * 25, 4.0, scada_n).round(2),
+    "Power_Consumption_kW": np.random.normal(38 + latent_degradation * 26, 4.0, scada_n).round(2),
     "Operational_Hours": operational_hours.round(2),
     "Error_Codes_Last_30_Days": error_codes,
     "sensor_anomaly_score": np.clip(
-        np.random.normal(latent_degradation, 0.12, n),
+        np.random.normal(latent_degradation, 0.12, scada_n),
         0,
         1
     ).round(3),
@@ -644,7 +659,7 @@ failure_probability = (
     + 0.40 * (scada["degradation_rate_pct"] / 100)
 )
 scada["predicted_failure_probability"] = np.clip(
-    failure_probability + np.random.normal(0, 0.06, n),
+    failure_probability + np.random.normal(0, 0.06, scada_n),
     0,
     1
 ).round(3)
@@ -654,7 +669,7 @@ remaining_useful_life = (
     - latent_degradation * 230
     - scada["degradation_rate_pct"] * 1.2
     - scada["Error_Codes_Last_30_Days"] * 3.0
-    + np.random.normal(0, 12, n)
+    + np.random.normal(0, 12, scada_n)
 )
 scada["Remaining_Useful_Life_days"] = np.clip(
     remaining_useful_life,
@@ -679,7 +694,7 @@ scada["Maintenance_Required_Within_45_Days"] = (
         & (scada["degradation_rate_pct"] >= 45)
     )
 ).astype(int)
-scada_dirty = add_missing_values(scada, 0.05)
+scada_dirty = add_missing_values(scada, 0.05, exclude_columns=["timestamp", "machine_id"])
 scada_dirty = add_outliers(
     scada_dirty,
     [
