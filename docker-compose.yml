@@ -63,7 +63,8 @@ services:
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       KAFKA_TOPIC: industrial.raw
-      SOURCE_DIR: /app/data/raw
+      SOURCE_DIRS: /app/data/raw,/app/data/processed/business
+      SOURCE_GLOB: "*.csv"
     volumes:
       - ./data:/app/data
     depends_on:
@@ -71,6 +72,26 @@ services:
         condition: service_healthy
     command: ["python", "pipeline/kafka_producer.py"]
     profiles: ["ingestion"]
+
+  kafka-machine-simulator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.pipeline
+    container_name: mspr-kafka-machine-simulator
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: industrial.raw
+      MACHINE_MAPPING_PATH: /app/data/processed/business/machine_mapping.csv
+      PARTS_PATH: /app/data/processed/business/parts.csv
+      SEND_INTERVAL_SECONDS: 2
+      MAX_EVENTS: 0
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: ["python", "pipeline/machine_stream_simulator.py"]
+    profiles: ["streaming"]
 
   kafka-datalake-consumer:
     build:

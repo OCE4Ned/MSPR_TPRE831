@@ -9,23 +9,32 @@ from kafka import KafkaProducer
 
 BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
 TOPIC = os.getenv("KAFKA_TOPIC", "industrial.raw")
-SOURCE_DIR = Path(os.getenv("SOURCE_DIR", "data/raw"))
+SOURCE_DIRS = [
+    Path(source_dir.strip())
+    for source_dir in os.getenv("SOURCE_DIRS", os.getenv("SOURCE_DIR", "data/raw")).split(",")
+    if source_dir.strip()
+]
+SOURCE_GLOB = os.getenv("SOURCE_GLOB", "*.csv")
 SEND_DELAY_SECONDS = float(os.getenv("SEND_DELAY_SECONDS", "0.02"))
 
 
-def iter_dirty_rows():
-    for csv_path in sorted(SOURCE_DIR.glob("*_sale.csv")):
-        source_system = csv_path.stem.replace("_sale", "")
-        with csv_path.open(newline="", encoding="utf-8") as file:
-            reader = csv.DictReader(file)
-            for row_number, row in enumerate(reader, start=1):
-                yield {
-                    "source_file": csv_path.name,
-                    "source_system": source_system,
-                    "row_number": row_number,
-                    "ingestion_mode": "kafka_to_datalake_raw",
-                    "payload": row,
-                }
+def iter_source_rows():
+    for source_dir in SOURCE_DIRS:
+        for csv_path in sorted(source_dir.glob(SOURCE_GLOB)):
+            source_system = csv_path.stem
+            for suffix in ("_sale", "_propre", "_business"):
+                source_system = source_system.replace(suffix, "")
+
+            with csv_path.open(newline="", encoding="utf-8") as file:
+                reader = csv.DictReader(file)
+                for row_number, row in enumerate(reader, start=1):
+                    yield {
+                        "source_file": csv_path.name,
+                        "source_system": source_system,
+                        "row_number": row_number,
+                        "ingestion_mode": "kafka_to_datalake_raw",
+                        "payload": row,
+                    }
 
 
 def main():
@@ -36,7 +45,7 @@ def main():
     )
 
     sent = 0
-    for event in iter_dirty_rows():
+    for event in iter_source_rows():
         producer.send(TOPIC, key=event["source_system"], value=event)
         sent += 1
         if SEND_DELAY_SECONDS:

@@ -55,3 +55,128 @@ CREATE TABLE IF NOT EXISTS gold.machine_health_daily (
     generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (snapshot_date, machine_id)
 );
+
+CREATE TABLE IF NOT EXISTS gold.dim_date (
+    date_id INTEGER PRIMARY KEY,
+    date DATE NOT NULL UNIQUE,
+    year INTEGER NOT NULL,
+    month INTEGER NOT NULL,
+    day INTEGER NOT NULL,
+    week INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gold.dim_plant (
+    plant_id TEXT PRIMARY KEY,
+    plant_name TEXT,
+    country TEXT
+);
+
+CREATE TABLE IF NOT EXISTS gold.dim_line (
+    production_line_id TEXT PRIMARY KEY,
+    plant_id TEXT REFERENCES gold.dim_plant(plant_id),
+    line_name TEXT
+);
+
+CREATE TABLE IF NOT EXISTS gold.dim_shift (
+    shift_id TEXT PRIMARY KEY,
+    shift_name TEXT NOT NULL,
+    start_hour TEXT NOT NULL,
+    end_hour TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS gold.dim_product (
+    product_id TEXT PRIMARY KEY,
+    product_name TEXT,
+    product_family TEXT
+);
+
+CREATE TABLE IF NOT EXISTS gold.dim_defect (
+    defect_id TEXT PRIMARY KEY,
+    defect_type TEXT,
+    defect_category TEXT,
+    defect_severity TEXT
+);
+
+CREATE TABLE IF NOT EXISTS gold.dim_machine (
+    machine_id TEXT PRIMARY KEY,
+    production_line_id TEXT REFERENCES gold.dim_line(production_line_id),
+    machine_type TEXT,
+    installation_year INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS gold.fact_production (
+    bronze_event_id BIGINT PRIMARY KEY REFERENCES bronze.raw_events(id),
+    date_id INTEGER REFERENCES gold.dim_date(date_id),
+    plant_id TEXT REFERENCES gold.dim_plant(plant_id),
+    production_line_id TEXT REFERENCES gold.dim_line(production_line_id),
+    machine_id TEXT REFERENCES gold.dim_machine(machine_id),
+    product_id TEXT REFERENCES gold.dim_product(product_id),
+    shift_id TEXT REFERENCES gold.dim_shift(shift_id),
+    planned_production_qty INTEGER,
+    actual_production_qty INTEGER,
+    good_qty INTEGER,
+    scrap_qty INTEGER,
+    cycle_time_sec NUMERIC,
+    target_cycle_time_sec NUMERIC,
+    production_speed NUMERIC,
+    downtime_minutes NUMERIC,
+    setup_time_minutes NUMERIC,
+    availability_rate NUMERIC,
+    performance_rate NUMERIC,
+    quality_rate NUMERIC,
+    trs NUMERIC,
+    scrap_rate NUMERIC
+);
+
+CREATE TABLE IF NOT EXISTS gold.fact_quality (
+    bronze_event_id BIGINT PRIMARY KEY REFERENCES bronze.raw_events(id),
+    date_id INTEGER REFERENCES gold.dim_date(date_id),
+    machine_id TEXT REFERENCES gold.dim_machine(machine_id),
+    product_id TEXT REFERENCES gold.dim_product(product_id),
+    defect_id TEXT REFERENCES gold.dim_defect(defect_id),
+    dimension_measurement NUMERIC,
+    tolerance_min NUMERIC,
+    tolerance_max NUMERIC,
+    is_conforming BOOLEAN,
+    scrap_flag BOOLEAN,
+    rework_required BOOLEAN,
+    quality_score NUMERIC
+);
+
+CREATE TABLE IF NOT EXISTS gold.fact_maintenance (
+    bronze_event_id BIGINT PRIMARY KEY REFERENCES bronze.raw_events(id),
+    date_id INTEGER REFERENCES gold.dim_date(date_id),
+    machine_id TEXT REFERENCES gold.dim_machine(machine_id),
+    maintenance_event_id TEXT,
+    maintenance_type TEXT,
+    failure_type TEXT,
+    failure_code TEXT,
+    failure_severity TEXT,
+    repair_time_minutes NUMERIC,
+    downtime_minutes NUMERIC,
+    maintenance_cost NUMERIC,
+    predicted_failure_probability NUMERIC,
+    sensor_anomaly_score NUMERIC
+);
+
+CREATE TABLE IF NOT EXISTS gold.fact_energy (
+    bronze_event_id BIGINT PRIMARY KEY REFERENCES bronze.raw_events(id),
+    date_id INTEGER REFERENCES gold.dim_date(date_id),
+    machine_id TEXT REFERENCES gold.dim_machine(machine_id),
+    energy_consumption_kwh NUMERIC,
+    compressed_air_usage NUMERIC,
+    cooling_water_usage NUMERIC,
+    power_peak_kw NUMERIC,
+    energy_cost NUMERIC,
+    energy_per_good_piece NUMERIC
+);
+
+CREATE TABLE IF NOT EXISTS gold.fact_alerts (
+    bronze_event_id BIGINT PRIMARY KEY REFERENCES bronze.raw_events(id),
+    date_id INTEGER REFERENCES gold.dim_date(date_id),
+    machine_id TEXT REFERENCES gold.dim_machine(machine_id),
+    alert_type TEXT,
+    alert_severity TEXT,
+    alert_reason TEXT,
+    is_active BOOLEAN
+);
