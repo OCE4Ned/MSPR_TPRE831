@@ -227,3 +227,5 @@ __marimo__/
 # React Router
 /*/.react-router/
 /*/build/
+
+data/datalake/raw/
