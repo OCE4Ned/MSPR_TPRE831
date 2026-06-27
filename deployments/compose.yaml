@@ -31,7 +31,7 @@ services:
     image: ${REGISTRY}/mecha/backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       IA_API_URL: http://api_ia:8000
       LOG_LEVEL: info
     ports:
@@ -45,7 +45,7 @@ services:
     image: ${REGISTRY}/mecha/api_ia:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
       MODEL_NAME: ${MODEL_NAME}
       MODEL_STAGE: ${MODEL_STAGE:-Production}
