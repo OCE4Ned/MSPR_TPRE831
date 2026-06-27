@@ -1,6 +1,11 @@
 pipeline {
   agent any
 
+  parameters {
+    booleanParam(name: 'FORCE_BUILD_ALL', defaultValue: false,
+                 description: 'Build et déploie tous les services, ignore le git diff')
+  }
+
   options {
     timestamps()
     timeout(time: 30, unit: 'MINUTES')
@@ -20,17 +25,25 @@ pipeline {
     stage('Detect changes') {
       steps {
         script {
-          def changed = sh(
-            script: 'git diff --name-only HEAD~1 HEAD',
-            returnStdout: true
-          ).trim().split('\n')
+          if (params.FORCE_BUILD_ALL) {
+            env.CHANGED_FRONTEND = 'true'
+            env.CHANGED_BACKEND  = 'true'
+            env.CHANGED_IA       = 'true'
+            env.CHANGED_DEPLOY   = 'true'
+            echo "FORCE_BUILD_ALL=true — tous les services seront buildés"
+          } else {
+            def changed = sh(
+              script: 'git diff --name-only HEAD~1 HEAD',
+              returnStdout: true
+            ).trim().split('\n')
 
-          env.CHANGED_FRONTEND = changed.any { it.startsWith('frontend/') }    ? 'true' : 'false'
-          env.CHANGED_BACKEND  = changed.any { it.startsWith('backend/') }     ? 'true' : 'false'
-          env.CHANGED_IA       = changed.any { it.startsWith('api-ia/') }      ? 'true' : 'false'
-          env.CHANGED_DEPLOY   = changed.any { it.startsWith('deployments/') } ? 'true' : 'false'
+            env.CHANGED_FRONTEND = changed.any { it.startsWith('frontend/') }    ? 'true' : 'false'
+            env.CHANGED_BACKEND  = changed.any { it.startsWith('backend/') }     ? 'true' : 'false'
+            env.CHANGED_IA       = changed.any { it.startsWith('api-ia/') }      ? 'true' : 'false'
+            env.CHANGED_DEPLOY   = changed.any { it.startsWith('deployments/') } ? 'true' : 'false'
 
-          echo "frontend=${env.CHANGED_FRONTEND} backend=${env.CHANGED_BACKEND} ia=${env.CHANGED_IA} deploy=${env.CHANGED_DEPLOY} tag=${env.IMAGE_TAG}"
+            echo "frontend=${env.CHANGED_FRONTEND} backend=${env.CHANGED_BACKEND} ia=${env.CHANGED_IA} deploy=${env.CHANGED_DEPLOY} tag=${env.IMAGE_TAG}"
+          }
         }
       }
     }
@@ -72,7 +85,7 @@ pipeline {
             ssh -o StrictHostKeyChecking=no ${env.VPS_HOST} '
               cd ${env.VPS_PATH} && \\
               export IMAGE_TAG=${env.IMAGE_TAG} && \\
-              docker compose pull && \\
+              docker compose pull --ignore-pull-failures && \\
               docker compose up -d --remove-orphans && \\
               docker image prune -f
             '
