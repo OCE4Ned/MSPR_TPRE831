@@ -7,8 +7,6 @@ from app.dto.predictions import (
     MachineSequence,
     RulResponse,
     StateResponse,
-    BatchStateRequest,
-    BatchStateResponse,
 )
 from app.services.model_registry import ModelRegistry
 from app.services.prediction_service import PredictionService
