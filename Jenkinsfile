@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   parameters {
-    booleanParam(name: 'FORCE_BUILD_ALL', defaultValue: yes,
+    booleanParam(name: 'FORCE_BUILD_ALL', defaultValue: true,
                  description: 'Build et déploie tous les services, ignore le git diff')
   }
 
