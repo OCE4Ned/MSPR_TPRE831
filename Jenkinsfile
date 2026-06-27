@@ -2,7 +2,7 @@ pipeline {
   agent any
 
   parameters {
-    booleanParam(name: 'FORCE_BUILD_ALL', defaultValue: true,
+    booleanParam(name: 'FORCE_BUILD_ALL', defaultValue: false,
                  description: 'Build et déploie tous les services, ignore le git diff')
   }
 
@@ -39,7 +39,7 @@ pipeline {
 
             env.CHANGED_FRONTEND = changed.any { it.startsWith('frontend/') }    ? 'true' : 'false'
             env.CHANGED_BACKEND  = changed.any { it.startsWith('backend/') }     ? 'true' : 'false'
-            env.CHANGED_IA       = changed.any { it.startsWith('api-ia/') }      ? 'true' : 'false'
+            env.CHANGED_IA       = changed.any { it.startsWith('api_ia/') }      ? 'true' : 'false'
             env.CHANGED_DEPLOY   = changed.any { it.startsWith('deployments/') } ? 'true' : 'false'
 
             echo "frontend=${env.CHANGED_FRONTEND} backend=${env.CHANGED_BACKEND} ia=${env.CHANGED_IA} deploy=${env.CHANGED_DEPLOY} tag=${env.IMAGE_TAG}"
@@ -62,7 +62,7 @@ pipeline {
 
         stage('IA API') {
           when { expression { env.CHANGED_IA == 'true' } }
-          steps { script { buildAndPush('api-ia') } }
+          steps { script { buildAndPush('api_ia') } }
         }
       }
     }

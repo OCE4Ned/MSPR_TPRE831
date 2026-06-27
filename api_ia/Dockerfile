@@ -1,14 +1,14 @@
-FROM python:3.11-slim AS base
+FROM python:3.13.0-alpine
+
+
 WORKDIR /code
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY app/ ./app/
 
-FROM base AS test
-RUN pip install --no-cache-dir pytest pytest-cov httpx
-COPY tests/ ./tests/
-CMD ["pytest", "-v", "--cov=app", "--cov-report=term"]
 
-FROM base AS production
-EXPOSE 5005
-CMD ["python", "app/main.py", "--host", "0.0.0.0", "--port", "5005"]
+COPY ./requirements.txt /code/requirements.txt
+
+
+RUN pip install --no-cache-dir --upgrade -r /code/requirements.txt
+
+
+COPY ./app /code/app
+CMD ["python", "app/main.py", "--port", "5005"]
