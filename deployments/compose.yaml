@@ -1,55 +1,68 @@
+name: mecha
+ 
+networks:
+  app:
+    driver: bridge
+  data:
+    driver: bridge
+ 
+volumes:
+  postgres_data:
+ 
 services:
-  app_metier:
-    build: ${DOCKER_REGISTRY}/ia/mspr/app_metier:latest
-    ports:
-      - "${APP_METIER_PORT}:5003"
-    depends_on:
-      - server_metier
-  server_metier:
-    build: ${DOCKER_REGISTRY}/ia/mspr/server_metier:latest
-    ports:
-      - "${SERVER_METIER_PORT}:5004"
+ 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      - API_IA_URL=${API_IA_URL}
-      - DATABASE_URL=${DATABASE_URL}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [app]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ${REGISTRY}/mecha/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      IA_API_URL: http://api-ia:8000
+      LOG_LEVEL: info
+    ports:
+      - "127.0.0.1:5006:8000"
+    networks: [app]
     depends_on:
       postgres:
         condition: service_healthy
-    networks:
-      - server_metier_network
-
-  postgres:
-    image: postgres:16-alpine
+ 
+  api-ia:
+    image: ${REGISTRY}/mecha/api-ia:${IMAGE_TAG:-latest}
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - POSTGRES_DB=${POSTGRES_DB}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
+      MODEL_NAME: ${MODEL_NAME}
+      MODEL_STAGE: ${MODEL_STAGE:-Production}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - server_metier_network
-  api_ia:
-    build: ${DOCKER_REGISTRY}/ia/mspr/api_ia:latest
+      - "127.0.0.1:5007:8000"
+    networks: [app]
+    depends_on:
+      postgres:
+        condition: service_healthy
+ 
+  frontend:
+    image: ${REGISTRY}/mecha/frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: ${PUBLIC_API_BASE_URL}
     ports:
-      - "${API_IA_PORT}:5005"
-
-networks:
-  server_metier_network:
-    driver: bridge
-
-volumes:
-  app_metier_data:
-    driver: local
-  server_metier_data:
-    driver: local
-  api_ia_data:
-    driver: local
-  postgres_data:
-    driver: local
+      - "127.0.0.1:5005:3000"
+    networks: [app]
+    depends_on:
+      - backend
