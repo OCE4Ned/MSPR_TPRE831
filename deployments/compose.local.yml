@@ -1,0 +1,84 @@
+name: mecha-local
+
+networks:
+  app:
+    driver: bridge
+
+volumes:
+  postgres_data_local:
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mecha}
+      POSTGRES_USER: ${POSTGRES_USER:-mecha}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mecha}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_local:/var/lib/postgresql/data
+    networks: [app]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mecha}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mecha}:${POSTGRES_PASSWORD:-mecha}@postgres:5432/${POSTGRES_DB:-mecha}
+      IA_API_URL: http://api-ia:8000
+      LOG_LEVEL: debug
+    ports:
+      - "5006:8000"
+    volumes:
+      - ./backend:/code
+    networks: [app]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  api-ia:
+    build:
+      context: ./api-ia
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mecha}:${POSTGRES_PASSWORD:-mecha}@postgres:5432/${POSTGRES_DB:-mecha}
+      MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://host.docker.internal:5000}
+      MODEL_NAME: ${MODEL_NAME:-mecha-model}
+      MODEL_STAGE: ${MODEL_STAGE:-Staging}
+      LOG_LEVEL: debug
+    ports:
+      - "5007:8000"
+    volumes:
+      - ./api-ia:/code
+    networks: [app]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      API_BASE_URL: http://localhost:5006
+      NODE_ENV: development
+    ports:
+      - "5005:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks: [app]
+    depends_on:
+      - backend
+    command: ["npm", "run", "dev"]
