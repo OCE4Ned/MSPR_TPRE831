@@ -24,7 +24,7 @@ jobs:
             backend:
               - 'backend/**'
             ia:
-              - 'api-ia/**'
+              - 'api_ia/**'
 
   frontend:
     needs: detect
@@ -60,7 +60,7 @@ jobs:
     if: needs.detect.outputs.ia == 'true'
     runs-on: ubuntu-latest
     defaults:
-      run: { working-directory: api-ia }
+      run: { working-directory: api_ia }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
