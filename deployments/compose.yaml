@@ -32,7 +32,7 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      IA_API_URL: http://api-ia:8000
+      IA_API_URL: http://api_ia:8000
       LOG_LEVEL: info
     ports:
       - "127.0.0.1:5006:8000"
@@ -41,8 +41,8 @@ services:
       postgres:
         condition: service_healthy
  
-  api-ia:
-    image: ${REGISTRY}/mecha/api-ia:${IMAGE_TAG:-latest}
+  api_ia:
+    image: ${REGISTRY}/mecha/api_ia:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
