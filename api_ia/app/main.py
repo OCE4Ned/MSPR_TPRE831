@@ -8,6 +8,8 @@ from app.routes import prediction_route, models_route, metrics_route
 from app.config import get_settings
 from app.services.model_registry import ModelRegistry
 
+from prometheus_fastapi_instrumentator import Instrumentator
+
 settings = get_settings()
 
 logging.basicConfig(
@@ -49,6 +51,8 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+Instrumentator().instrument(app).expose(app)
 
 app.include_router(prediction_route.router, prefix="/api/v1")
 app.include_router(models_route.router, prefix="/api/v1")
