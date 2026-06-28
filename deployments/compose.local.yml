@@ -28,7 +28,7 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mecha}:${POSTGRES_PASSWORD:-mecha}@postgres:5432/${POSTGRES_DB:-mecha}
@@ -37,7 +37,7 @@ services:
     ports:
       - "5006:8000"
     volumes:
-      - ./backend:/code
+      - ../backend:/code
     networks: [app]
     depends_on:
       postgres:
@@ -46,7 +46,7 @@ services:
 
   api-ia:
     build:
-      context: ./api-ia
+      context: ../api-ia
       dockerfile: Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mecha}:${POSTGRES_PASSWORD:-mecha}@postgres:5432/${POSTGRES_DB:-mecha}
@@ -57,7 +57,7 @@ services:
     ports:
       - "5007:8000"
     volumes:
-      - ./api-ia:/code
+      - ../api-ia:/code
     networks: [app]
     depends_on:
       postgres:
@@ -68,7 +68,7 @@ services:
 
   frontend:
     build:
-      context: ./frontend
+      context: ../frontend
       dockerfile: Dockerfile
     environment:
       API_BASE_URL: http://localhost:5006
@@ -76,7 +76,7 @@ services:
     ports:
       - "5005:3000"
     volumes:
-      - ./frontend:/app
+      - ../frontend:/app
       - /app/node_modules
     networks: [app]
     depends_on:
