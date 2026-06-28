@@ -4,43 +4,85 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
+# temp class to test the new schema with renamed fields, before changing the MLflow model signature
 class SensorReading(BaseModel):
     """
     Source de vérité du schéma de features.
     Ajouter/retirer/renommer un champ ici, c'est l'unique geste à faire.
     FEATURE_COLUMNS, le DataFrame d'inférence et le contrat MLflow suivent.
     """
+    machine_id: str
     cycle_time_sec: float
-    temperature_C: float
+    temperature_c: float # Renommé pour cohérence avec le MLflow model signature
     vibration_mms: float
-    sound_dB: float
+    sound_db: float # Renommé pour cohérence avec le MLflow model signature
     oil_level_pct: float
     coolant_level_pct: float
     hydraulic_pressure_bar: float
-    coolant_flow_L_min: float
+    coolant_flow_l_min: float # Renommé pour cohérence avec le MLflow model signature
     heat_index: float
-    power_consumption_kW: float
+    power_consumption_kw: float # Renommé pour cohérence avec le MLflow model signature
     operational_hours: float
     error_codes_last_30_days: int
-    sensor_anomaly_score: float
+    # sensor_anomaly_score: float
+    quality_status: str
     ai_override_events: int
-    flag_temperature_high: bool
-    flag_vibration_high: bool
-    flag_sound_high: bool
-    flag_oil_low: bool
-    flag_coolant_low: bool
-    flag_pressure_low: bool
-    flag_coolant_flow_low: bool
-    flag_heat_high: bool
-    flag_power_high: bool
-    flag_error_codes_high: bool
-    flag_anomaly_high: bool
-    degradation_score: float
-    degradation_rate_pct: float
-    predicted_failure_probability: float
-    remaining_useful_life_days: float
-    failure_within_7_days: bool
-    maintenance_required_within_45_days: bool
+    # flag_temperature_high: bool
+    # flag_vibration_high: bool
+    # flag_sound_high: bool
+    # flag_oil_low: bool
+    # flag_coolant_low: bool
+    # flag_pressure_low: bool
+    # flag_coolant_flow_low: bool
+    # flag_heat_high: bool
+    # flag_power_high: bool
+    # flag_error_codes_high: bool
+    # flag_anomaly_high: bool
+    # degradation_score: float
+    # degradation_rate_pct: float
+    # predicted_failure_probability: float
+    # remaining_useful_life_days: float
+    # failure_within_7_days: bool
+    # maintenance_required_within_45_days: bool
+
+
+# class SensorReading(BaseModel):
+#     """
+#     Source de vérité du schéma de features.
+#     Ajouter/retirer/renommer un champ ici, c'est l'unique geste à faire.
+#     FEATURE_COLUMNS, le DataFrame d'inférence et le contrat MLflow suivent.
+#     """
+#     cycle_time_sec: float
+#     temperature_C: float
+#     vibration_mms: float
+#     sound_dB: float
+#     oil_level_pct: float
+#     coolant_level_pct: float
+#     hydraulic_pressure_bar: float
+#     coolant_flow_L_min: float
+#     heat_index: float
+#     power_consumption_kW: float
+#     operational_hours: float
+#     error_codes_last_30_days: int
+#     sensor_anomaly_score: float
+#     ai_override_events: int
+#     flag_temperature_high: bool
+#     flag_vibration_high: bool
+#     flag_sound_high: bool
+#     flag_oil_low: bool
+#     flag_coolant_low: bool
+#     flag_pressure_low: bool
+#     flag_coolant_flow_low: bool
+#     flag_heat_high: bool
+#     flag_power_high: bool
+#     flag_error_codes_high: bool
+#     flag_anomaly_high: bool
+#     degradation_score: float
+#     degradation_rate_pct: float
+#     predicted_failure_probability: float
+#     remaining_useful_life_days: float
+#     failure_within_7_days: bool
+#     maintenance_required_within_45_days: bool
 
 
 class MachineFeatures(BaseModel):
