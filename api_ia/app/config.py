@@ -5,7 +5,7 @@ from functools import lru_cache
 
 class ModelSpec(BaseModel):
     name: str
-    alias: str = "production"
+    alias: str = "champion"
 
 
 class Settings(BaseSettings):
@@ -14,11 +14,11 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
     mlflow_tracking_username: str | None = os.getenv("MLFLOW_TRACKING_USERNAME")
     mlflow_tracking_password: str | None = os.getenv("MLFLOW_TRACKING_PASSWORD")
-    api_key: str = os.getenv("API_KEY", "changeme")
+    api_key: str = os.getenv("API_KEY", "dev-key-change-me")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
 
     models: dict[str, ModelSpec] = {
-        "state_classifier": ModelSpec(name="mecha-machine-state-classifier"),
+        "state_classifier": ModelSpec(name="mecha-failure-7d-classifier"),
         "rul_regressor": ModelSpec(name="mecha-rul-regressor"),
         # à venir, sans toucher au code :
         # "anomaly_detector": ModelSpec(name="mecha-anomaly-detector"),

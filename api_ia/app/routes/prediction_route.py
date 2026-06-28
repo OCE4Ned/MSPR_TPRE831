@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, HTTPException
 
 from app.deps import get_registry, verify_api_key
 from app.dto.predictions import (
