@@ -44,9 +44,9 @@ services:
         condition: service_healthy
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
 
-  api-ia:
+  api_ia:
     build:
-      context: ../api-ia
+      context: ../api_ia
       dockerfile: Dockerfile
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mecha}:${POSTGRES_PASSWORD:-mecha}@postgres:5432/${POSTGRES_DB:-mecha}
@@ -57,7 +57,7 @@ services:
     ports:
       - "5007:8000"
     volumes:
-      - ../api-ia:/code
+      - ../api_ia:/code
     networks: [app]
     depends_on:
       postgres:
