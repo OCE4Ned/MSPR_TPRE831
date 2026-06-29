@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY docker/requirements-pipeline.txt /tmp/requirements-pipeline.txt
+RUN pip install --no-cache-dir -r /tmp/requirements-pipeline.txt
+
+COPY pipeline /app/pipeline

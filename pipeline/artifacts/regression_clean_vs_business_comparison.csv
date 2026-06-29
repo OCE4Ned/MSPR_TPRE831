@@ -1,0 +1,4 @@
+dataset_type,model,mae_days,rmse_days,r2_score,business_features_used
+clean,clean_linear_regression,6.922374175517545,11.166817415333892,0.9841071333011646,
+business,business_linear_regression,6.940882249534477,11.153256700128328,0.9841457096959885,"machine_type, factory_id, production_line_id, product_family, manufacturer, criticality_level"
+clean,clean_gradient_boosting,6.980395421353684,11.153322756165577,0.9841455218988776,

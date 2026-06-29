@@ -1,0 +1,37 @@
+{
+    "classification_failure_within_7_days": {
+        "model": "GradientBoostingClassifier",
+        "accuracy": 0.8333333333333334,
+        "precision": 0.875,
+        "recall": 0.8235294117647058,
+        "f1_score": 0.8484848484848485,
+        "roc_auc": 0.8631221719457014
+    },
+    "regression_remaining_useful_life_linear": {
+        "model": "LinearRegression",
+        "mae": 83.9787595140735,
+        "mse": 8780.750173650176,
+        "r2_score": 0.016797250858687107
+    },
+    "regression_remaining_useful_life_gradient_boosting": {
+        "model": "GradientBoostingRegressor",
+        "mae": 82.00688485269329,
+        "mse": 9204.774765407423,
+        "r2_score": -0.03068185241546284
+    },
+    "features_used": [
+        "cycle_time_sec",
+        "Temperature_C",
+        "Vibration_mms",
+        "Sound_dB",
+        "Oil_Level_pct",
+        "Coolant_Level_pct",
+        "Hydraulic_Pressure_bar",
+        "Coolant_Flow_L_min",
+        "Heat_Index",
+        "Power_Consumption_kW",
+        "Operational_Hours",
+        "Error_Codes_Last_30_Days",
+        "sensor_anomaly_score"
+    ]
+}
