@@ -1,9 +1,0 @@
-production_line_id,production_line_name,factory_id,product_id
-FR_L_CARTERS,Ligne carters moteur,FR01,P002
-FR_L_FREINS,Ligne disques de frein,FR01,P001
-FR_L_ARBRES,Ligne arbres de transmission,FR01,P003
-FR_L_QUALITE,Contrôle qualité précision,FR01,P004
-ES_L_CARTERS,Ligne carters moteur,ES01,P002
-ES_L_FOURS,Traitement thermique précision,ES01,P003
-ES_L_AUBES,Ligne aubes turbine,ES01,P004
-ES_L_QUALITE,Contrôle qualité dimensionnel,ES01,P006

@@ -1,3 +1,0 @@
-factory_id,factory_name,country,city,site_maturity_level,equipment_level,sensor_reliability,data_quality_level,maintenance_strategy,machine_availability_profile,oee_profile,unplanned_downtime_profile,quality_drift_profile,energy_efficiency_profile,systems_maturity
-FR01,Usine Lyon,France,Lyon,mature,recent,high,high,preventive,stable,stable,low,low,optimized,MES/SCADA/GMAO integres
-ES01,Usine Madrid,Espagne,Madrid,developing,heterogeneous_older,medium,heterogeneous,corrective_dominant,variable,unstable,high,high,variable,MES/SCADA/GMAO heterogenes

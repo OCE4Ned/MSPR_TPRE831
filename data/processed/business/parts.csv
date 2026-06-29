@@ -1,7 +1,0 @@
-product_id,part_name,eligible_factory_ids,product_family
-P001,Disque de frein,FR01|ES01,Freinage automobile
-P002,Carter moteur,FR01|ES01,Moteur automobile
-P003,Arbre de transmission,FR01|ES01,Transmission automobile
-P004,Aube de turbine,FR01|ES01,Turbomachine aéronautique
-P005,Support moteur aéronautique,FR01|ES01,Structure moteur aéronautique
-P006,Boîtier hydraulique,FR01|ES01,Hydraulique aéronautique
