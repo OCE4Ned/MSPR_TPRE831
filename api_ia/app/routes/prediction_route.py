@@ -1,5 +1,7 @@
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends
+from sqlmodel import Session
 
+from app.db.session import get_session
 from app.deps import get_registry, verify_api_key
 from app.dto.predictions import (
     AnomalyResponse,
@@ -14,8 +16,11 @@ from app.services.prediction_service import PredictionService
 router = APIRouter(prefix="/predictions", tags=["predictions"])
 
 
-def get_service(registry: ModelRegistry = Depends(get_registry)) -> PredictionService:
-    return PredictionService(registry)
+def get_service(
+    registry: ModelRegistry = Depends(get_registry),
+    session: Session | None = Depends(get_session),
+) -> PredictionService:
+    return PredictionService(registry, session)
 
 
 @router.post("/state", response_model=StateResponse, dependencies=[Depends(verify_api_key)])

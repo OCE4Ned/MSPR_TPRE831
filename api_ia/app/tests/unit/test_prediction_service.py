@@ -1,7 +1,10 @@
+from unittest.mock import MagicMock
+
 import numpy as np
 import pandas as pd
 import pytest
 
+from app.db.models import PredictionRecord
 from app.services.prediction_service import PredictionService
 
 
@@ -85,3 +88,49 @@ def test_predict_state_batch_vectorized(features, registry):
 
     assert [r.machine_id for r in results] == ["M-001", "M-002", "M-003"]
     assert [r.state for r in results] == ["normal", "at_risk", "normal"]
+
+
+def test_predict_state_persists_record_when_session_present(features, registry):
+    registry.set_model("state_classifier", np.array([[0.2, 0.8]]))
+    session = MagicMock()
+    service = PredictionService(registry, session=session)
+
+    service.predict_state(features)
+
+    assert session.add.call_count == 1
+    session.commit.assert_called_once()
+    record = session.add.call_args.args[0]
+    assert isinstance(record, PredictionRecord)
+    assert record.machine_id == "M-001"
+    assert record.action == "state"
+    assert record.output["risk_score"] == pytest.approx(0.8)
+
+
+def test_predict_state_batch_persists_one_record_per_item(features, registry):
+    registry.set_model(
+        "state_classifier",
+        np.array([[0.9, 0.1], [0.3, 0.7], [0.95, 0.05]]),
+    )
+    session = MagicMock()
+    service = PredictionService(registry, session=session)
+    batch = [features, features.model_copy(update={"machine_id": "M-002"}),
+             features.model_copy(update={"machine_id": "M-003"})]
+
+    service.predict_state_batch(batch)
+
+    assert session.add.call_count == 3
+    # Batch path commits once, not per-row.
+    session.commit.assert_called_once()
+
+
+def test_predict_state_does_not_break_when_persist_fails(features, registry):
+    registry.set_model("state_classifier", np.array([[0.2, 0.8]]))
+    session = MagicMock()
+    session.commit.side_effect = RuntimeError("db down")
+    service = PredictionService(registry, session=session)
+
+    # Prediction must still return successfully even if persistence fails.
+    result = service.predict_state(features)
+
+    assert result.state == "at_risk"
+    session.rollback.assert_called_once()

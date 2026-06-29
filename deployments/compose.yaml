@@ -18,8 +18,11 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql:ro
     networks: [app]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
@@ -47,10 +50,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
-      MODEL_NAME: ${MODEL_NAME}
-      MODEL_STAGE: ${MODEL_STAGE:-Production}
       MLFLOW_TRACKING_USERNAME: ${MLFLOW_TRACKING_USERNAME}
       MLFLOW_TRACKING_PASSWORD: ${MLFLOW_TRACKING_PASSWORD}
+      API_KEY: ${API_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENV: ${ENV:-production}
     ports:
       - "127.0.0.1:5007:8000"
     networks: [app]

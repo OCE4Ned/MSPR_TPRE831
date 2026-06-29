@@ -51,9 +51,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mecha}:${POSTGRES_PASSWORD:-mecha}@postgres:5432/${POSTGRES_DB:-mecha}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI:-http://host.docker.internal:5000}
-      MODEL_NAME: ${MODEL_NAME:-mecha-model}
-      MODEL_STAGE: ${MODEL_STAGE:-Staging}
-      LOG_LEVEL: debug
+      MLFLOW_TRACKING_USERNAME: ${MLFLOW_TRACKING_USERNAME}
+      MLFLOW_TRACKING_PASSWORD: ${MLFLOW_TRACKING_PASSWORD}
+      API_KEY: ${API_KEY:-dev-key-change-me}
+      LOG_LEVEL: DEBUG
+      ENV: development
     ports:
       - "5007:8000"
     volumes:

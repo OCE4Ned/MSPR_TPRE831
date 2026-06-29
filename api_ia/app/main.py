@@ -1,12 +1,14 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, status
+from fastapi.responses import JSONResponse
 import uvicorn
 
 from app.routes import prediction_route, models_route, metrics_route
 from app.config import get_settings
-from app.services.model_registry import ModelRegistry
+from app.db.session import init_db
+from app.services.model_registry import ModelNotLoadedError, ModelRegistry
 from app.metrics import models_loaded, api_ready
 
 from prometheus_fastapi_instrumentator import Instrumentator
@@ -23,6 +25,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting MECHA AI API")
+
+    try:
+        init_db()
+    except Exception:
+        logger.exception(
+            "Failed to initialize DB schema: predictions will be served but not persisted"
+        )
+
     registry = ModelRegistry(
         tracking_uri=settings.mlflow_tracking_uri,
         tracking_username=settings.mlflow_tracking_username,
@@ -61,10 +71,24 @@ app.include_router(prediction_route.router, prefix="/api/v1")
 app.include_router(models_route.router, prefix="/api/v1")
 app.include_router(metrics_route.router, prefix="/api/v1")
 
+
+@app.exception_handler(ModelNotLoadedError)
+async def _model_not_loaded_handler(_: Request, exc: ModelNotLoadedError):
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={"detail": str(exc)},
+    )
+
+
 Instrumentator().instrument(app).expose(app)
 
 def main():
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=settings.env)
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=settings.env == "development",
+    )
 
 if __name__ == "__main__":
     main()

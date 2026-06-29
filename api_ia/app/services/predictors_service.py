@@ -88,7 +88,7 @@ class TabularRulPredictor:
     @staticmethod
     def _extract_rul(raw) -> float:
         if isinstance(raw, pd.DataFrame) and "predicted_rul_days" in raw.columns:
-            return float(raw["predicted_rul_days"].iloc[0])
+            return max(0.0, float(raw["predicted_rul_days"].iloc[0]))
         return max(0.0, float(np.asarray(raw).ravel()[0]))
 
 
