@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 import psycopg2
+from psycopg2.extras import execute_values
 from airflow import DAG
 from airflow.decorators import task
 from airflow.hooks.base import BaseHook
@@ -224,7 +225,7 @@ with DAG(
     dag_id="industrial_kafka_datalake_elt",
     description="ELT MSPR: datalake brut -> bronze -> silver -> gold dans PostgreSQL",
     start_date=datetime(2026, 1, 1),
-    schedule="*/5 * * * *",
+    schedule="0 * * * *",
     catchup=False,
     max_active_runs=1,
     tags=["mspr", "kafka", "datalake", "elt"],
@@ -236,36 +237,46 @@ with DAG(
         if not files:
             raise FileNotFoundError(f"Aucun fichier JSONL trouve dans {DATALAKE_RAW_DIR}")
 
+        # Insertion par lots (execute_values) : ~200 requetes au lieu de ~1M
+        # -> supprime les allers-retours reseau ligne par ligne.
+        insert_sql = (
+            "INSERT INTO bronze.raw_events "
+            "(source_file, source_system, ingested_at, payload, payload_hash) "
+            "VALUES %s ON CONFLICT (payload_hash) DO NOTHING"
+        )
+        template = "(%s, %s, %s, %s::jsonb, %s)"
+        batch_size = 5000
+
         inserted = 0
+        batch = []
         with get_postgres_conn() as conn:
             with conn.cursor() as cur:
+
+                def flush():
+                    nonlocal inserted
+                    if not batch:
+                        return
+                    # page_size = taille du lot -> 1 requete/flush -> rowcount exact
+                    execute_values(cur, insert_sql, batch, template=template, page_size=batch_size)
+                    inserted += cur.rowcount
+                    batch.clear()
+
                 for path in files:
                     with path.open(encoding="utf-8") as file:
                         for line in file:
                             if not line.strip():
                                 continue
                             event = json.loads(line)
-                            cur.execute(
-                                """
-                                INSERT INTO bronze.raw_events (
-                                    source_file,
-                                    source_system,
-                                    ingested_at,
-                                    payload,
-                                    payload_hash
-                                )
-                                VALUES (%s, %s, %s, %s::jsonb, %s)
-                                ON CONFLICT (payload_hash) DO NOTHING
-                                """,
-                                (
-                                    event["source_file"],
-                                    event["source_system"],
-                                    event.get("datalake_ingested_at"),
-                                    json.dumps(event["payload"], ensure_ascii=False),
-                                    payload_hash(event),
-                                ),
-                            )
-                            inserted += cur.rowcount
+                            batch.append((
+                                event["source_file"],
+                                event["source_system"],
+                                event.get("datalake_ingested_at"),
+                                json.dumps(event["payload"], ensure_ascii=False),
+                                payload_hash(event),
+                            ))
+                            if len(batch) >= batch_size:
+                                flush()
+                flush()
         return inserted
 
     @task
@@ -384,6 +395,26 @@ with DAG(
 
     @task
     def build_gold_star_schema():
+        # Generateurs d'expressions SQL reproduisant les helpers Python
+        # (as_number / as_int / clean_text / as_bool) de maniere ensembliste.
+        def _num(field):
+            return (
+                f"CASE WHEN btrim(payload->>'{field}') ~ '^-?[0-9]+(\\.[0-9]+)?$' "
+                f"THEN (payload->>'{field}')::numeric END"
+            )
+
+        def _int(field):
+            return f"round({_num(field)})::int"
+
+        def _txt(field):
+            return f"NULLIF(btrim(payload->>'{field}'), '')"
+
+        def _bool(field):
+            return (
+                f"CASE WHEN {_txt(field)} IS NULL THEN NULL "
+                f"ELSE lower(btrim(payload->>'{field}')) IN ('1','true','t','yes','y','oui') END"
+            )
+
         inserted = {
             "fact_production": 0,
             "fact_quality": 0,
@@ -394,227 +425,314 @@ with DAG(
 
         with get_postgres_conn() as conn:
             with conn.cursor() as cur:
+                # 1) Staging temporaire : derive toutes les cles dimensionnelles
+                #    en une seule passe sur bronze (au lieu d'une boucle Python).
                 cur.execute(
                     """
-                    SELECT id, source_file, source_system, payload
-                    FROM bronze.raw_events
-                    WHERE source_system IN (
-                        'mes',
-                        'gmao',
-                        'energie',
-                        'scada_capteurs',
-                        'erp',
-                        'machine_mapping',
-                        'factories',
-                        'production_lines',
-                        'parts'
+                    CREATE TEMP TABLE _stg ON COMMIT DROP AS
+                    WITH base AS (
+                        SELECT
+                            id AS bronze_event_id,
+                            source_system,
+                            source_file,
+                            payload,
+                            (right(source_file, 13) = '_business.csv'
+                             OR source_file = 'industrial_realtime_stream') AS is_biz,
+                            CASE WHEN payload->>'timestamp' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                                 THEN NULLIF(btrim(payload->>'timestamp'), '')::timestamp END AS ts,
+                            lower(NULLIF(btrim(payload->>'shift'), '')) AS shift_txt,
+                            COALESCE(NULLIF(btrim(payload->>'factory_id'), ''),
+                                     NULLIF(btrim(payload->>'plant_id'), '')) AS plant_id,
+                            NULLIF(btrim(payload->>'production_line_id'), '') AS line_id,
+                            NULLIF(btrim(payload->>'product_id'), '') AS product_id,
+                            NULLIF(btrim(payload->>'machine_id'), '') AS machine_id,
+                            COALESCE(NULLIF(btrim(payload->>'defect_type'), ''), 'no_defect') AS defect_type,
+                            COALESCE(NULLIF(btrim(payload->>'defect_category'), ''), 'none') AS defect_category,
+                            COALESCE(NULLIF(btrim(payload->>'defect_severity'), ''), 'minor') AS defect_severity
+                        FROM bronze.raw_events
+                        WHERE source_system IN (
+                            'mes', 'gmao', 'energie', 'scada_capteurs', 'erp',
+                            'machine_mapping', 'factories', 'production_lines', 'parts'
+                        )
+                    ),
+                    derived AS (
+                        SELECT
+                            base.*,
+                            CASE WHEN ts IS NOT NULL THEN to_char(ts, 'YYYYMMDD')::int END AS date_id,
+                            CASE
+                                WHEN shift_txt IN ('matin', 'morning') THEN 'SHIFT_MATIN'
+                                WHEN shift_txt IN ('apres-midi', 'après-midi', 'afternoon') THEN 'SHIFT_APRES_MIDI'
+                                WHEN shift_txt IN ('nuit', 'night') THEN 'SHIFT_NUIT'
+                                WHEN shift_txt IS NOT NULL THEN 'SHIFT_' || upper(replace(shift_txt, ' ', '_'))
+                                WHEN extract(hour FROM ts) >= 6 AND extract(hour FROM ts) < 14 THEN 'SHIFT_MATIN'
+                                WHEN extract(hour FROM ts) >= 14 AND extract(hour FROM ts) < 22 THEN 'SHIFT_APRES_MIDI'
+                                ELSE 'SHIFT_NUIT'
+                            END AS shift_id,
+                            btrim(regexp_replace(
+                                lower(defect_type || '_' || defect_category || '_' || defect_severity),
+                                '[^a-z0-9]+', '_', 'g'), '_') AS defect_id
+                        FROM base
                     )
-                    ORDER BY id
+                    SELECT
+                        derived.*,
+                        CASE shift_id
+                            WHEN 'SHIFT_MATIN' THEN 'matin'
+                            WHEN 'SHIFT_APRES_MIDI' THEN 'apres-midi'
+                            WHEN 'SHIFT_NUIT' THEN 'nuit'
+                            ELSE shift_txt
+                        END AS shift_name,
+                        CASE shift_id
+                            WHEN 'SHIFT_MATIN' THEN '06:00'
+                            WHEN 'SHIFT_APRES_MIDI' THEN '14:00'
+                            WHEN 'SHIFT_NUIT' THEN '22:00'
+                            ELSE '00:00'
+                        END AS start_hour,
+                        CASE shift_id
+                            WHEN 'SHIFT_MATIN' THEN '14:00'
+                            WHEN 'SHIFT_APRES_MIDI' THEN '22:00'
+                            WHEN 'SHIFT_NUIT' THEN '06:00'
+                            ELSE '23:59'
+                        END AS end_hour
+                    FROM derived
                     """
                 )
-                rows = cur.fetchall()
 
-                for bronze_event_id, source_file, source_system, payload in rows:
-                    ctx = upsert_dimension_context(cur, payload)
-                    is_business_event = source_file.endswith("_business.csv")
-                    is_realtime_event = source_file == "industrial_realtime_stream"
+                # 2) Dimensions (ensemblistes, dans l'ordre des contraintes FK)
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_date (date_id, date, year, month, day, week)
+                    SELECT date_id, max(ts::date), max(extract(year FROM ts))::int,
+                           max(extract(month FROM ts))::int, max(extract(day FROM ts))::int,
+                           max(extract(week FROM ts))::int
+                    FROM _stg WHERE date_id IS NOT NULL GROUP BY date_id
+                    ON CONFLICT (date_id) DO NOTHING
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_plant (plant_id, plant_name, country)
+                    SELECT plant_id,
+                           max(NULLIF(btrim(payload->>'factory_name'), '')),
+                           max(NULLIF(btrim(payload->>'country'), ''))
+                    FROM _stg WHERE plant_id IS NOT NULL GROUP BY plant_id
+                    ON CONFLICT (plant_id) DO UPDATE SET
+                        plant_name = COALESCE(EXCLUDED.plant_name, gold.dim_plant.plant_name),
+                        country = COALESCE(EXCLUDED.country, gold.dim_plant.country)
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_line (production_line_id, plant_id, line_name)
+                    SELECT line_id, max(plant_id),
+                           max(NULLIF(btrim(payload->>'production_line_name'), ''))
+                    FROM _stg WHERE line_id IS NOT NULL GROUP BY line_id
+                    ON CONFLICT (production_line_id) DO UPDATE SET
+                        plant_id = COALESCE(EXCLUDED.plant_id, gold.dim_line.plant_id),
+                        line_name = COALESCE(EXCLUDED.line_name, gold.dim_line.line_name)
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_shift (shift_id, shift_name, start_hour, end_hour)
+                    SELECT shift_id, max(shift_name), max(start_hour), max(end_hour)
+                    FROM _stg GROUP BY shift_id
+                    ON CONFLICT (shift_id) DO UPDATE SET
+                        shift_name = EXCLUDED.shift_name,
+                        start_hour = EXCLUDED.start_hour,
+                        end_hour = EXCLUDED.end_hour
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_product (product_id, product_name, product_family)
+                    SELECT product_id,
+                           max(NULLIF(btrim(payload->>'part_name'), '')),
+                           max(NULLIF(btrim(payload->>'product_family'), ''))
+                    FROM _stg WHERE product_id IS NOT NULL GROUP BY product_id
+                    ON CONFLICT (product_id) DO UPDATE SET
+                        product_name = COALESCE(EXCLUDED.product_name, gold.dim_product.product_name),
+                        product_family = COALESCE(EXCLUDED.product_family, gold.dim_product.product_family)
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_machine (machine_id, production_line_id, machine_type, installation_year)
+                    SELECT machine_id, max(line_id),
+                           max(NULLIF(btrim(payload->>'machine_type'), '')),
+                           max(COALESCE(
+                               CASE WHEN btrim(payload->>'Installation_Year') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                                    THEN round((payload->>'Installation_Year')::numeric)::int END,
+                               CASE WHEN btrim(payload->>'installation_year') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                                    THEN round((payload->>'installation_year')::numeric)::int END
+                           ))
+                    FROM _stg WHERE machine_id IS NOT NULL GROUP BY machine_id
+                    ON CONFLICT (machine_id) DO UPDATE SET
+                        production_line_id = COALESCE(EXCLUDED.production_line_id, gold.dim_machine.production_line_id),
+                        machine_type = COALESCE(EXCLUDED.machine_type, gold.dim_machine.machine_type),
+                        installation_year = COALESCE(EXCLUDED.installation_year, gold.dim_machine.installation_year)
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_defect (defect_id, defect_type, defect_category, defect_severity)
+                    SELECT defect_id, max(defect_type), max(defect_category), max(defect_severity)
+                    FROM _stg GROUP BY defect_id
+                    ON CONFLICT (defect_id) DO NOTHING
+                    """
+                )
 
-                    if source_system == "mes" and (is_business_event or is_realtime_event):
-                        actual_qty = as_int(payload.get("actual_production_qty"))
-                        good_qty = as_int(payload.get("good_qty"))
-                        scrap_qty = as_int(payload.get("scrap_qty"))
-                        downtime = as_number(payload.get("downtime_minutes")) or 0
-                        setup = as_number(payload.get("setup_time_minutes")) or 0
-                        planned_minutes = 480
-                        availability = round(max(planned_minutes - downtime - setup, 0) / planned_minutes, 4)
-                        quality = rate(good_qty, actual_qty)
-                        performance = rate(as_number(payload.get("production_speed")), 100)
-                        trs = None
-                        if availability is not None and quality is not None and performance is not None:
-                            trs = round(availability * quality * performance, 4)
+                # 3) Faits : uniquement les evenements business / temps reel
+                cur.execute(
+                    f"""
+                    INSERT INTO gold.fact_production (
+                        bronze_event_id, date_id, plant_id, production_line_id, machine_id,
+                        product_id, shift_id, planned_production_qty, actual_production_qty,
+                        good_qty, scrap_qty, cycle_time_sec, target_cycle_time_sec,
+                        production_speed, downtime_minutes, setup_time_minutes,
+                        availability_rate, performance_rate, quality_rate, trs, scrap_rate
+                    )
+                    SELECT
+                        bronze_event_id, date_id, plant_id, line_id, machine_id,
+                        product_id, shift_id, planned, actual, good, scrap, cyc, target_cyc,
+                        speed, downtime, setup, availability, performance, quality,
+                        CASE WHEN quality IS NOT NULL AND performance IS NOT NULL
+                             THEN round(availability * quality * performance, 4) END AS trs,
+                        CASE WHEN scrap IS NOT NULL AND actual IS NOT NULL AND actual <> 0
+                             THEN round(scrap::numeric / actual, 4) END AS scrap_rate
+                    FROM (
+                        SELECT
+                            bronze_event_id, date_id, plant_id, line_id, machine_id, product_id, shift_id,
+                            {_int('planned_production_qty')} AS planned,
+                            {_int('actual_production_qty')} AS actual,
+                            {_int('good_qty')} AS good,
+                            {_int('scrap_qty')} AS scrap,
+                            {_num('cycle_time_sec')} AS cyc,
+                            {_num('target_cycle_time_sec')} AS target_cyc,
+                            {_num('production_speed')} AS speed,
+                            COALESCE({_num('downtime_minutes')}, 0) AS downtime,
+                            COALESCE({_num('setup_time_minutes')}, 0) AS setup
+                        FROM _stg WHERE source_system = 'mes' AND is_biz
+                    ) base,
+                    LATERAL (SELECT
+                        round(greatest(480 - downtime - setup, 0) / 480.0, 4) AS availability,
+                        CASE WHEN good IS NOT NULL AND actual IS NOT NULL AND actual <> 0
+                             THEN round(good::numeric / actual, 4) END AS quality,
+                        CASE WHEN speed IS NOT NULL THEN round(speed / 100.0, 4) END AS performance
+                    ) calc
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        actual_production_qty = EXCLUDED.actual_production_qty,
+                        good_qty = EXCLUDED.good_qty,
+                        scrap_qty = EXCLUDED.scrap_qty,
+                        availability_rate = EXCLUDED.availability_rate,
+                        performance_rate = EXCLUDED.performance_rate,
+                        quality_rate = EXCLUDED.quality_rate,
+                        trs = EXCLUDED.trs,
+                        scrap_rate = EXCLUDED.scrap_rate
+                    """
+                )
+                inserted["fact_production"] = cur.rowcount
 
-                        cur.execute(
-                            """
-                            INSERT INTO gold.fact_production (
-                                bronze_event_id, date_id, plant_id, production_line_id, machine_id,
-                                product_id, shift_id, planned_production_qty, actual_production_qty,
-                                good_qty, scrap_qty, cycle_time_sec, target_cycle_time_sec,
-                                production_speed, downtime_minutes, setup_time_minutes,
-                                availability_rate, performance_rate, quality_rate, trs, scrap_rate
-                            )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (bronze_event_id) DO UPDATE SET
-                                actual_production_qty = EXCLUDED.actual_production_qty,
-                                good_qty = EXCLUDED.good_qty,
-                                scrap_qty = EXCLUDED.scrap_qty,
-                                availability_rate = EXCLUDED.availability_rate,
-                                performance_rate = EXCLUDED.performance_rate,
-                                quality_rate = EXCLUDED.quality_rate,
-                                trs = EXCLUDED.trs,
-                                scrap_rate = EXCLUDED.scrap_rate
-                            """,
-                            (
-                                bronze_event_id,
-                                ctx["date_id"],
-                                ctx["plant_id"],
-                                ctx["line_id"],
-                                ctx["machine_id"],
-                                ctx["product_id"],
-                                ctx["shift_id"],
-                                as_int(payload.get("planned_production_qty")),
-                                actual_qty,
-                                good_qty,
-                                scrap_qty,
-                                as_number(payload.get("cycle_time_sec")),
-                                as_number(payload.get("target_cycle_time_sec")),
-                                as_number(payload.get("production_speed")),
-                                downtime,
-                                setup,
-                                availability,
-                                performance,
-                                quality,
-                                trs,
-                                rate(scrap_qty, actual_qty),
-                            ),
-                        )
-                        inserted["fact_production"] += cur.rowcount
+                cur.execute(
+                    f"""
+                    INSERT INTO gold.fact_quality (
+                        bronze_event_id, date_id, machine_id, product_id, defect_id,
+                        dimension_measurement, tolerance_min, tolerance_max,
+                        is_conforming, scrap_flag, rework_required, quality_score
+                    )
+                    SELECT bronze_event_id, date_id, machine_id, product_id, defect_id,
+                        {_num('dimension_measurement')}, {_num('tolerance_min')}, {_num('tolerance_max')},
+                        {_bool('is_conforming')}, {_bool('scrap_flag')}, {_bool('rework_required')},
+                        {_num('quality_score')}
+                    FROM _stg WHERE source_system = 'mes' AND is_biz
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        dimension_measurement = EXCLUDED.dimension_measurement,
+                        tolerance_min = EXCLUDED.tolerance_min,
+                        tolerance_max = EXCLUDED.tolerance_max,
+                        is_conforming = EXCLUDED.is_conforming,
+                        scrap_flag = EXCLUDED.scrap_flag,
+                        rework_required = EXCLUDED.rework_required,
+                        quality_score = EXCLUDED.quality_score
+                    """
+                )
+                inserted["fact_quality"] = cur.rowcount
 
-                        cur.execute(
-                            """
-                            INSERT INTO gold.fact_quality (
-                                bronze_event_id, date_id, machine_id, product_id, defect_id,
-                                dimension_measurement, tolerance_min, tolerance_max,
-                                is_conforming, scrap_flag, rework_required, quality_score
-                            )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (bronze_event_id) DO UPDATE SET
-                                dimension_measurement = EXCLUDED.dimension_measurement,
-                                tolerance_min = EXCLUDED.tolerance_min,
-                                tolerance_max = EXCLUDED.tolerance_max,
-                                is_conforming = EXCLUDED.is_conforming,
-                                scrap_flag = EXCLUDED.scrap_flag,
-                                rework_required = EXCLUDED.rework_required,
-                                quality_score = EXCLUDED.quality_score
-                            """,
-                            (
-                                bronze_event_id,
-                                ctx["date_id"],
-                                ctx["machine_id"],
-                                ctx["product_id"],
-                                ctx["defect_id"],
-                                as_number(payload.get("dimension_measurement")),
-                                as_number(payload.get("tolerance_min")),
-                                as_number(payload.get("tolerance_max")),
-                                as_bool(payload.get("is_conforming")),
-                                as_bool(payload.get("scrap_flag")),
-                                as_bool(payload.get("rework_required")),
-                                as_number(payload.get("quality_score")),
-                            ),
-                        )
-                        inserted["fact_quality"] += cur.rowcount
+                cur.execute(
+                    f"""
+                    INSERT INTO gold.fact_maintenance (
+                        bronze_event_id, date_id, machine_id, maintenance_event_id,
+                        maintenance_type, failure_type, failure_code, failure_severity,
+                        repair_time_minutes, downtime_minutes, maintenance_cost,
+                        predicted_failure_probability, sensor_anomaly_score
+                    )
+                    SELECT bronze_event_id, date_id, machine_id,
+                        {_txt('maintenance_event_id')}, {_txt('maintenance_type')}, {_txt('failure_type')},
+                        {_txt('failure_code')}, {_txt('failure_severity')},
+                        {_num('repair_time_minutes')}, {_num('downtime_minutes')}, {_num('maintenance_cost')},
+                        {_num('predicted_failure_probability')}, {_num('sensor_anomaly_score')}
+                    FROM _stg WHERE source_system = 'gmao' AND is_biz
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        maintenance_type = EXCLUDED.maintenance_type,
+                        failure_type = EXCLUDED.failure_type,
+                        failure_code = EXCLUDED.failure_code,
+                        failure_severity = EXCLUDED.failure_severity,
+                        repair_time_minutes = EXCLUDED.repair_time_minutes,
+                        downtime_minutes = EXCLUDED.downtime_minutes,
+                        maintenance_cost = EXCLUDED.maintenance_cost
+                    """
+                )
+                inserted["fact_maintenance"] = cur.rowcount
 
-                    elif source_system == "gmao" and (is_business_event or is_realtime_event):
-                        cur.execute(
-                            """
-                            INSERT INTO gold.fact_maintenance (
-                                bronze_event_id, date_id, machine_id, maintenance_event_id,
-                                maintenance_type, failure_type, failure_code, failure_severity,
-                                repair_time_minutes, downtime_minutes, maintenance_cost,
-                                predicted_failure_probability, sensor_anomaly_score
-                            )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (bronze_event_id) DO UPDATE SET
-                                maintenance_type = EXCLUDED.maintenance_type,
-                                failure_type = EXCLUDED.failure_type,
-                                failure_code = EXCLUDED.failure_code,
-                                failure_severity = EXCLUDED.failure_severity,
-                                repair_time_minutes = EXCLUDED.repair_time_minutes,
-                                downtime_minutes = EXCLUDED.downtime_minutes,
-                                maintenance_cost = EXCLUDED.maintenance_cost
-                            """,
-                            (
-                                bronze_event_id,
-                                ctx["date_id"],
-                                ctx["machine_id"],
-                                clean_text(payload.get("maintenance_event_id")),
-                                clean_text(payload.get("maintenance_type")),
-                                clean_text(payload.get("failure_type")),
-                                clean_text(payload.get("failure_code")),
-                                clean_text(payload.get("failure_severity")),
-                                as_number(payload.get("repair_time_minutes")),
-                                as_number(payload.get("downtime_minutes")),
-                                as_number(payload.get("maintenance_cost")),
-                                as_number(payload.get("predicted_failure_probability")),
-                                as_number(payload.get("sensor_anomaly_score")),
-                            ),
-                        )
-                        inserted["fact_maintenance"] += cur.rowcount
+                cur.execute(
+                    f"""
+                    INSERT INTO gold.fact_energy (
+                        bronze_event_id, date_id, machine_id, energy_consumption_kwh,
+                        compressed_air_usage, cooling_water_usage, power_peak_kw,
+                        energy_cost, energy_per_good_piece
+                    )
+                    SELECT bronze_event_id, date_id, machine_id,
+                        {_num('energy_consumption_kwh')}, {_num('compressed_air_usage')},
+                        {_num('cooling_water_usage')}, {_num('power_peak_kw')}, {_num('energy_cost')},
+                        NULL::numeric
+                    FROM _stg WHERE source_system = 'energie' AND is_biz
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        energy_consumption_kwh = EXCLUDED.energy_consumption_kwh,
+                        compressed_air_usage = EXCLUDED.compressed_air_usage,
+                        cooling_water_usage = EXCLUDED.cooling_water_usage,
+                        power_peak_kw = EXCLUDED.power_peak_kw,
+                        energy_cost = EXCLUDED.energy_cost,
+                        energy_per_good_piece = EXCLUDED.energy_per_good_piece
+                    """
+                )
+                inserted["fact_energy"] = cur.rowcount
 
-                    elif source_system == "energie" and (is_business_event or is_realtime_event):
-                        energy = as_number(payload.get("energy_consumption_kwh"))
-                        cur.execute(
-                            """
-                            INSERT INTO gold.fact_energy (
-                                bronze_event_id, date_id, machine_id, energy_consumption_kwh,
-                                compressed_air_usage, cooling_water_usage, power_peak_kw,
-                                energy_cost, energy_per_good_piece
-                            )
-                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (bronze_event_id) DO UPDATE SET
-                                energy_consumption_kwh = EXCLUDED.energy_consumption_kwh,
-                                compressed_air_usage = EXCLUDED.compressed_air_usage,
-                                cooling_water_usage = EXCLUDED.cooling_water_usage,
-                                power_peak_kw = EXCLUDED.power_peak_kw,
-                                energy_cost = EXCLUDED.energy_cost,
-                                energy_per_good_piece = EXCLUDED.energy_per_good_piece
-                            """,
-                            (
-                                bronze_event_id,
-                                ctx["date_id"],
-                                ctx["machine_id"],
-                                energy,
-                                as_number(payload.get("compressed_air_usage")),
-                                as_number(payload.get("cooling_water_usage")),
-                                as_number(payload.get("power_peak_kw")),
-                                as_number(payload.get("energy_cost")),
-                                None,
-                            ),
-                        )
-                        inserted["fact_energy"] += cur.rowcount
-
-                    elif source_system == "scada_capteurs" and (is_business_event or is_realtime_event):
-                        active_flags = [
-                            name.replace("flag_", "")
-                            for name, value in payload.items()
-                            if name.startswith("flag_") and as_bool(value)
-                        ]
-                        is_active = bool(active_flags) or (as_number(payload.get("predicted_failure_probability")) or 0) >= 0.7
-                        if is_active:
-                            severity = "critical" if (as_number(payload.get("predicted_failure_probability")) or 0) >= 0.7 else "warning"
-                            cur.execute(
-                                """
-                                INSERT INTO gold.fact_alerts (
-                                    bronze_event_id, date_id, machine_id, alert_type,
-                                    alert_severity, alert_reason, is_active
-                                )
-                                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                                ON CONFLICT (bronze_event_id) DO UPDATE SET
-                                    alert_type = EXCLUDED.alert_type,
-                                    alert_severity = EXCLUDED.alert_severity,
-                                    alert_reason = EXCLUDED.alert_reason,
-                                    is_active = EXCLUDED.is_active
-                                """,
-                                (
-                                    bronze_event_id,
-                                    ctx["date_id"],
-                                    ctx["machine_id"],
-                                    "sensor_health",
-                                    severity,
-                                    ",".join(active_flags) or "predicted_failure_probability_high",
-                                    True,
-                                ),
-                            )
-                            inserted["fact_alerts"] += cur.rowcount
+                cur.execute(
+                    """
+                    INSERT INTO gold.fact_alerts (
+                        bronze_event_id, date_id, machine_id, alert_type,
+                        alert_severity, alert_reason, is_active
+                    )
+                    SELECT bronze_event_id, date_id, machine_id, 'sensor_health',
+                        CASE WHEN COALESCE(pfp, 0) >= 0.7 THEN 'critical' ELSE 'warning' END,
+                        COALESCE(active_flags, 'predicted_failure_probability_high'), TRUE
+                    FROM (
+                        SELECT bronze_event_id, date_id, machine_id,
+                            (SELECT string_agg(replace(k, 'flag_', ''), ',' ORDER BY k)
+                               FROM jsonb_each_text(payload) AS j(k, v)
+                               WHERE k LIKE 'flag\\_%' ESCAPE '\\'
+                                 AND lower(btrim(v)) IN ('1','true','t','yes','y','oui')) AS active_flags,
+                            CASE WHEN btrim(payload->>'predicted_failure_probability') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                                 THEN (payload->>'predicted_failure_probability')::numeric END AS pfp
+                        FROM _stg WHERE source_system = 'scada_capteurs' AND is_biz
+                    ) a
+                    WHERE active_flags IS NOT NULL OR COALESCE(pfp, 0) >= 0.7
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        alert_type = EXCLUDED.alert_type,
+                        alert_severity = EXCLUDED.alert_severity,
+                        alert_reason = EXCLUDED.alert_reason,
+                        is_active = EXCLUDED.is_active
+                    """
+                )
+                inserted["fact_alerts"] = cur.rowcount
 
                 cur.execute(
                     """
