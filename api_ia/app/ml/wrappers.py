@@ -18,7 +18,7 @@ class ClassifierWrapper(mlflow.pyfunc.PythonModel):
 
 class RegressorWrapper(mlflow.pyfunc.PythonModel):
     """sklearn / XGBoost regressor.
-    Sortie : DataFrame avec colonne 'predicted_rul_hours'."""
+    Sortie : DataFrame avec colonne 'predicted_rul_days'."""
 
     def load_context(self, context):
         self.model = joblib.load(context.artifacts["model"])
@@ -27,7 +27,7 @@ class RegressorWrapper(mlflow.pyfunc.PythonModel):
         pred = self.model.predict(model_input)
         # Clamp côté wrapper : un RUL négatif n'a pas de sens physique
         pred = np.clip(pred, a_min=0.0, a_max=None)
-        return pd.DataFrame({"predicted_rul_hours": pred})
+        return pd.DataFrame({"predicted_rul_days": pred})
 
 
 class AnomalyWrapper(mlflow.pyfunc.PythonModel):
@@ -50,7 +50,7 @@ class AnomalyWrapper(mlflow.pyfunc.PythonModel):
 
 class SequenceRegressorWrapper(mlflow.pyfunc.PythonModel):
     """Keras / TensorFlow LSTM. Entrée : ndarray (N, T, F).
-    Sortie : DataFrame avec 'predicted_rul_hours'."""
+    Sortie : DataFrame avec 'predicted_rul_days'."""
 
     def load_context(self, context):
         import tensorflow as tf  # import paresseux
@@ -60,4 +60,4 @@ class SequenceRegressorWrapper(mlflow.pyfunc.PythonModel):
         arr = np.asarray(model_input)
         pred = self.model.predict(arr, verbose=0).ravel()
         pred = np.clip(pred, a_min=0.0, a_max=None)
-        return pd.DataFrame({"predicted_rul_hours": pred})
+        return pd.DataFrame({"predicted_rul_days": pred})

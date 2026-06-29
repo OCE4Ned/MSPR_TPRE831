@@ -47,10 +47,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       MLFLOW_TRACKING_URI: ${MLFLOW_TRACKING_URI}
-      MODEL_NAME: ${MODEL_NAME}
-      MODEL_STAGE: ${MODEL_STAGE:-Production}
       MLFLOW_TRACKING_USERNAME: ${MLFLOW_TRACKING_USERNAME}
       MLFLOW_TRACKING_PASSWORD: ${MLFLOW_TRACKING_PASSWORD}
+      API_KEY: ${API_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ENV: ${ENV:-production}
     ports:
       - "127.0.0.1:5007:8000"
     networks: [app]

@@ -1,7 +1,8 @@
+from functools import lru_cache
+
 from pydantic import BaseModel
 from pydantic_settings import BaseSettings, SettingsConfigDict
-import os
-from functools import lru_cache
+
 
 class ModelSpec(BaseModel):
     name: str
@@ -11,11 +12,13 @@ class ModelSpec(BaseModel):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_nested_delimiter="__")
 
-    mlflow_tracking_uri: str = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
-    mlflow_tracking_username: str | None = os.getenv("MLFLOW_TRACKING_USERNAME")
-    mlflow_tracking_password: str | None = os.getenv("MLFLOW_TRACKING_PASSWORD")
-    api_key: str = os.getenv("API_KEY", "dev-key-change-me")
-    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    mlflow_tracking_uri: str = "http://localhost:5000"
+    mlflow_tracking_username: str | None = None
+    mlflow_tracking_password: str | None = None
+    database_url: str | None = None
+    api_key: str = "dev-key-change-me"
+    log_level: str = "INFO"
+    env: str = "development"
 
     models: dict[str, ModelSpec] = {
         "state_classifier": ModelSpec(name="mecha-failure-7d-classifier"),
@@ -25,10 +28,10 @@ class Settings(BaseSettings):
         # "rul_lstm": ModelSpec(name="mecha-rul-lstm"),
     }
 
-    env: str = os.getenv("ENV", "development")
     batch_size_limit: int = 500
     risk_threshold: float = 0.5
     anomaly_threshold: float = -0.1
+
 
 @lru_cache()
 def get_settings() -> Settings:

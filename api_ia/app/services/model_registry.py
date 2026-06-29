@@ -9,6 +9,10 @@ from app.ml.features import FEATURE_COLUMNS
 logger = logging.getLogger(__name__)
 
 
+class ModelNotLoadedError(RuntimeError):
+    """Raised when a prediction is requested for a model that failed to load."""
+
+
 @dataclass
 class LoadedModel:
     model: PyFuncModel
@@ -55,7 +59,7 @@ class ModelRegistry:
 
     def get(self, key: str) -> LoadedModel:
         if key not in self._models:
-            raise RuntimeError(f"Model '{key}' not loaded")
+            raise ModelNotLoadedError(f"Model '{key}' not loaded")
         return self._models[key]
 
     def list(self) -> dict[str, LoadedModel]:
