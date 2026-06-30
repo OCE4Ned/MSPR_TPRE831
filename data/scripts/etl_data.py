@@ -10,7 +10,7 @@ CLEAN_DIR = "data/clean"
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
-n = 1000
+n = 100000
 
 timestamps = pd.date_range("2026-01-01 06:00:00", periods=n, freq="5min")
 
