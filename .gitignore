@@ -249,3 +249,6 @@ __marimo__/
 /*/build/
 
 data/datalake/raw/
+data/clean/
+data/processed/
+data/raw
