@@ -160,7 +160,10 @@ pipeline {
   post {
     success { echo "Déploiement ${env.IMAGE_TAG} réussi" }
     failure { echo "Échec du déploiement ${env.IMAGE_TAG}" }
-    always  { cleanWs() }
+    always  {
+      sh "docker logout ${env.REGISTRY} || true"
+      cleanWs()
+    }
   }
 }
 
@@ -195,10 +198,11 @@ def pushImage(String image, String latest) {
       usernameVariable: 'REG_USER',
       passwordVariable: 'REG_PASS')]) {
     sh """
+      export DOCKER_CONFIG=\$(mktemp -d)
       echo \$REG_PASS | docker login ${env.REGISTRY} -u \$REG_USER --password-stdin
       docker push ${image}
       docker push ${latest}
-      docker logout ${env.REGISTRY}
+      rm -rf \$DOCKER_CONFIG
     """
   }
 }
