@@ -10,7 +10,8 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./docker/init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql:ro
+      - ./init-postgres.sql:/docker-entrypoint-initdb.d/01-init-postgres.sql:ro
+      - ../pipeline/docker/init-postgres.sql:/docker-entrypoint-initdb.d/02-industrial-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mspr -d industrial_dw"]
       interval: 10s
@@ -57,7 +58,7 @@ services:
 
   kafka-producer:
     build:
-      context: .
+      context: ../pipeline
       dockerfile: docker/Dockerfile.pipeline
     container_name: mspr-kafka-producer
     environment:
@@ -66,7 +67,7 @@ services:
       SOURCE_DIRS: /app/data/raw,/app/data/processed/business
       SOURCE_GLOB: "*.csv"
     volumes:
-      - ./data:/app/data
+      - ../data:/app/data
     depends_on:
       kafka:
         condition: service_healthy
@@ -75,7 +76,7 @@ services:
 
   kafka-machine-simulator:
     build:
-      context: .
+      context: ../pipeline
       dockerfile: docker/Dockerfile.pipeline
     container_name: mspr-kafka-machine-simulator
     environment:
@@ -86,7 +87,7 @@ services:
       SEND_INTERVAL_SECONDS: 2
       MAX_EVENTS: 0
     volumes:
-      - ./data:/app/data
+      - ../data:/app/data
     depends_on:
       kafka:
         condition: service_healthy
@@ -95,7 +96,7 @@ services:
 
   kafka-datalake-consumer:
     build:
-      context: .
+      context: ../pipeline
       dockerfile: docker/Dockerfile.pipeline
     container_name: mspr-kafka-datalake-consumer
     environment:
@@ -105,7 +106,7 @@ services:
       DATALAKE_RAW_DIR: /app/data/datalake/raw
       MAX_IDLE_SECONDS: 20
     volumes:
-      - ./data:/app/data
+      - ../data:/app/data
     depends_on:
       kafka:
         condition: service_healthy
@@ -114,18 +115,19 @@ services:
 
   airflow-init:
     build:
-      context: .
+      context: ../pipeline
       dockerfile: docker/Dockerfile.airflow
     container_name: mspr-airflow-init
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://mspr:mspr@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: mspr-airflow-shared-secret
       AIRFLOW_CONN_INDUSTRIAL_POSTGRES: postgres://mspr:mspr@postgres:5432/industrial_dw
       AIRFLOW_VAR_DATALAKE_RAW_DIR: /opt/airflow/data/datalake/raw
     volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./data:/opt/airflow/data
+      - ../pipeline/airflow/dags:/opt/airflow/dags
+      - ../data:/opt/airflow/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -135,18 +137,19 @@ services:
 
   airflow-webserver:
     build:
-      context: .
+      context: ../pipeline
       dockerfile: docker/Dockerfile.airflow
     container_name: mspr-airflow-webserver
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://mspr:mspr@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: mspr-airflow-shared-secret
       AIRFLOW_CONN_INDUSTRIAL_POSTGRES: postgres://mspr:mspr@postgres:5432/industrial_dw
       AIRFLOW_VAR_DATALAKE_RAW_DIR: /opt/airflow/data/datalake/raw
     volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./data:/opt/airflow/data
+      - ../pipeline/airflow/dags:/opt/airflow/dags
+      - ../data:/opt/airflow/data
     ports:
       - "8080:8080"
     depends_on:
@@ -156,18 +159,19 @@ services:
 
   airflow-scheduler:
     build:
-      context: .
+      context: ../pipeline
       dockerfile: docker/Dockerfile.airflow
     container_name: mspr-airflow-scheduler
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://mspr:mspr@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: mspr-airflow-shared-secret
       AIRFLOW_CONN_INDUSTRIAL_POSTGRES: postgres://mspr:mspr@postgres:5432/industrial_dw
       AIRFLOW_VAR_DATALAKE_RAW_DIR: /opt/airflow/data/datalake/raw
     volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./data:/opt/airflow/data
+      - ../pipeline/airflow/dags:/opt/airflow/dags
+      - ../data:/opt/airflow/data
     depends_on:
       airflow-init:
         condition: service_completed_successfully
