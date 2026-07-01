@@ -1,35 +1,40 @@
-name: mecha-etl
-
-networks:
-  app:
-    external: true
-    name: mecha_app
-  etl:
-    driver: bridge
-
-volumes:
-  pgadmin_data:
-  pipeline_data:
-
 services:
-  # Crée la base airflow dans le Postgres existant si absente
-  postgres-bootstrap:
-    image: postgres:16-alpine
-    restart: "no"
-    networks: [app]
+  postgres:
+    image: postgres:16
+    container_name: mspr-postgres
     environment:
-      PGPASSWORD: ${POSTGRES_PASSWORD}
-    entrypoint: ["bash", "-c"]
-    command:
-      - |
-        psql -h postgres -U ${POSTGRES_USER} -d ${POSTGRES_DB} -tc \
-          "SELECT 1 FROM pg_database WHERE datname='airflow'" | grep -q 1 \
-        || psql -h postgres -U ${POSTGRES_USER} -d ${POSTGRES_DB} \
-          -c "CREATE DATABASE airflow"
+      POSTGRES_USER: mspr
+      POSTGRES_PASSWORD: mspr
+      POSTGRES_DB: industrial_dw
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-postgres.sql:/docker-entrypoint-initdb.d/01-init-postgres.sql:ro
+      - ../pipeline/docker/init-postgres.sql:/docker-entrypoint-initdb.d/02-industrial-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mspr -d industrial_dw"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: mspr-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   kafka:
     image: apache/kafka:3.7.1
-    restart: unless-stopped
+    container_name: mspr-kafka
     environment:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
@@ -43,124 +48,135 @@ services:
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    ports:
+      - "9092:9092"
     healthcheck:
       test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 10
-    networks: [etl]
 
   kafka-producer:
-    image: ${REGISTRY}/mecha/pipeline:${IMAGE_TAG:-latest}
-    restart: unless-stopped
+    build:
+      context: ../pipeline
+      dockerfile: docker/Dockerfile.pipeline
+    container_name: mspr-kafka-producer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_TOPIC: industrial.raw
       SOURCE_DIRS: /app/data/raw,/app/data/processed/business
-      SOURCE_GLOB: ${SOURCE_GLOB}
+      SOURCE_GLOB: "*.csv"
     volumes:
-      - pipeline_data:/app/data
+      - ../data:/app/data
     depends_on:
       kafka:
         condition: service_healthy
-    networks: [etl]
     command: ["python", "pipeline/kafka_producer.py"]
     profiles: ["ingestion"]
 
   kafka-machine-simulator:
-    image: ${REGISTRY}/mecha/pipeline:${IMAGE_TAG:-latest}
-    restart: unless-stopped
+    build:
+      context: ../pipeline
+      dockerfile: docker/Dockerfile.pipeline
+    container_name: mspr-kafka-machine-simulator
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_TOPIC: ${KAFKA_TOPIC}
+      KAFKA_TOPIC: industrial.raw
       MACHINE_MAPPING_PATH: /app/data/processed/business/machine_mapping.csv
       PARTS_PATH: /app/data/processed/business/parts.csv
-      SEND_INTERVAL_SECONDS: ${SEND_INTERVAL_SECONDS}
-      MAX_EVENTS: ${MAX_EVENTS}
+      SEND_INTERVAL_SECONDS: 2
+      MAX_EVENTS: 0
     volumes:
-      - pipeline_data:/app/data
+      - ../data:/app/data
     depends_on:
       kafka:
         condition: service_healthy
-    networks: [etl]
     command: ["python", "pipeline/machine_stream_simulator.py"]
     restart: unless-stopped
 
   kafka-datalake-consumer:
-    image: ${REGISTRY}/mecha/pipeline:${IMAGE_TAG:-latest}
-    restart: unless-stopped
+    build:
+      context: ../pipeline
+      dockerfile: docker/Dockerfile.pipeline
+    container_name: mspr-kafka-datalake-consumer
     environment:
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
-      KAFKA_TOPIC: ${KAFKA_TOPIC}
-      KAFKA_GROUP_ID: ${KAFKA_GROUP_ID}
+      KAFKA_TOPIC: industrial.raw
+      KAFKA_GROUP_ID: datalake-writer
       DATALAKE_RAW_DIR: /app/data/datalake/raw
-      MAX_IDLE_SECONDS: ${MAX_IDLE_SECONDS}
+      MAX_IDLE_SECONDS: 20
     volumes:
-      - pipeline_data:/app/data
+      - ../data:/app/data
     depends_on:
       kafka:
         condition: service_healthy
-    networks: [etl]
     command: ["python", "pipeline/kafka_to_datalake.py"]
     restart: unless-stopped
 
   airflow-init:
-    image: ${REGISTRY}/mecha/airflow:${IMAGE_TAG:-latest}
-    restart: "no"
-    environment: &airflow_env
+    build:
+      context: ../pipeline
+      dockerfile: docker/Dockerfile.airflow
+    container_name: mspr-airflow-init
+    environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/airflow
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://mspr:mspr@postgres:5432/airflow
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY}
-      AIRFLOW_CONN_INDUSTRIAL_POSTGRES: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      AIRFLOW__WEBSERVER__SECRET_KEY: mspr-airflow-shared-secret
+      AIRFLOW_CONN_INDUSTRIAL_POSTGRES: postgres://mspr:mspr@postgres:5432/industrial_dw
       AIRFLOW_VAR_DATALAKE_RAW_DIR: /opt/airflow/data/datalake/raw
-      AIRFLOW_VAR_POSTGRES_CONN_ID: ${AIRFLOW_VAR_POSTGRES_CONN_ID}
-      AIRFLOW_CONN_INDUSTRIAL_DW: postgres://etl_writer:${ETL_WRITER_PASSWORD}@postgres:5432/${POSTGRES_DB}
     volumes:
-      - pipeline_data:/opt/airflow/data
+      - ../pipeline/airflow/dags:/opt/airflow/dags
+      - ../data:/opt/airflow/data
     depends_on:
-      postgres-bootstrap:
-        condition: service_completed_successfully
-    networks: [app]
+      postgres:
+        condition: service_healthy
     command: >
       bash -c "airflow db migrate &&
-      airflow users create --username \"${AIRFLOW_ADMIN_USERNAME}\" --password \"${AIRFLOW_ADMIN_PASSWORD}\" --firstname Admin --lastname MSPR --role Admin --email \"${AIRFLOW_ADMIN_EMAIL}\" || true"
+      airflow users create --username admin --password admin --firstname Admin --lastname MSPR --role Admin --email admin@example.com || true"
 
   airflow-webserver:
-    image: ${REGISTRY}/mecha/airflow:${IMAGE_TAG:-latest}
-    restart: unless-stopped
-    environment: *airflow_env
+    build:
+      context: ../pipeline
+      dockerfile: docker/Dockerfile.airflow
+    container_name: mspr-airflow-webserver
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://mspr:mspr@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: mspr-airflow-shared-secret
+      AIRFLOW_CONN_INDUSTRIAL_POSTGRES: postgres://mspr:mspr@postgres:5432/industrial_dw
+      AIRFLOW_VAR_DATALAKE_RAW_DIR: /opt/airflow/data/datalake/raw
     volumes:
-      - pipeline_data:/opt/airflow/data
+      - ../pipeline/airflow/dags:/opt/airflow/dags
+      - ../data:/opt/airflow/data
     ports:
-      - "127.0.0.1:8081:8080"
+      - "8080:8080"
     depends_on:
       airflow-init:
         condition: service_completed_successfully
-    networks: [app]
     command: ["airflow", "webserver"]
 
   airflow-scheduler:
-    image: ${REGISTRY}/mecha/airflow:${IMAGE_TAG:-latest}
-    restart: unless-stopped
-    environment: *airflow_env
+    build:
+      context: ../pipeline
+      dockerfile: docker/Dockerfile.airflow
+    container_name: mspr-airflow-scheduler
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://mspr:mspr@postgres:5432/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__SECRET_KEY: mspr-airflow-shared-secret
+      AIRFLOW_CONN_INDUSTRIAL_POSTGRES: postgres://mspr:mspr@postgres:5432/industrial_dw
+      AIRFLOW_VAR_DATALAKE_RAW_DIR: /opt/airflow/data/datalake/raw
     volumes:
-      - pipeline_data:/opt/airflow/data
+      - ../pipeline/airflow/dags:/opt/airflow/dags
+      - ../data:/opt/airflow/data
     depends_on:
       airflow-init:
         condition: service_completed_successfully
-    networks: [app, etl]
     command: ["airflow", "scheduler"]
 
-  pgadmin:
-    image: dpage/pgadmin4:8
-    restart: unless-stopped
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
-    ports:
-      - "127.0.0.1:5050:80"
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-    networks: [app]
-    profiles: ["admin"]
+volumes:
+  postgres_data:
+  pgadmin_data:
