@@ -22,7 +22,6 @@ services:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init-postgres.sql:/docker-entrypoint-initdb.d/init-postgres.sql:ro
     networks: [app]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
