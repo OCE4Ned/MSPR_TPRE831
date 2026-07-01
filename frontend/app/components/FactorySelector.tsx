@@ -2,9 +2,15 @@ import { useEffect, useRef, useState } from "react";
 import type { Factory } from "~/lib/types";
 import { statusColor } from "~/lib/format";
 
+/** Minimal shape needed by the selector (real sites have no map coords). */
+export type SelectableFactory = Pick<
+  Factory,
+  "id" | "name" | "country" | "status" | "trs"
+>;
+
 interface FactorySelectorProps {
-  factories: Factory[];
-  selected: Factory;
+  factories: SelectableFactory[];
+  selected: SelectableFactory;
   onSelect: (id: string) => void;
 }
 

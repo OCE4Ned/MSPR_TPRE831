@@ -7,11 +7,30 @@ export function RiskMachineItem({ machine }: { machine: RiskMachine }) {
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-slate-100 bg-slate-50/50 p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">
-        <h4 className="font-semibold text-slate-800">{machine.name}</h4>
+        <div className="flex flex-wrap items-center gap-2">
+          <h4 className="font-semibold text-slate-800">{machine.name}</h4>
+          {machine.state && (
+            <span
+              className={`rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ring-inset ${
+                machine.state === "at_risk"
+                  ? "bg-status-crit/10 text-status-crit ring-status-crit/30"
+                  : "bg-status-good/10 text-status-good ring-status-good/30"
+              }`}
+            >
+              {machine.state === "at_risk" ? "À risque" : "Normal"}
+            </span>
+          )}
+        </div>
         <p className="mt-1 text-xs text-slate-500">
           Dernière intervention&nbsp;: {machine.lastIntervention}
           <span className="mx-2 text-slate-300">•</span>
           Incidents&nbsp;: {machine.incidents}
+          {machine.rulDays != null && (
+            <>
+              <span className="mx-2 text-slate-300">•</span>
+              Durée de vie restante&nbsp;: <span className="font-medium text-slate-600">{machine.rulDays} j</span>
+            </>
+          )}
         </p>
       </div>
       <div className="w-full sm:w-56">

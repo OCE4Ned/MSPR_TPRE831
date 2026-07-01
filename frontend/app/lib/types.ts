@@ -25,6 +25,9 @@ export interface ProductionLine {
   status: StatusLevel;
 }
 
+/** Machine failure state predicted by the IA classifier. */
+export type MachineState = "normal" | "at_risk";
+
 /** Machine at risk. */
 export interface RiskMachine {
   id: string;
@@ -32,6 +35,20 @@ export interface RiskMachine {
   lastIntervention: string;
   incidents: number;
   riskScore: number;
+  /** État prédit (classifieur IA). Absent si l'IA est hors ligne. */
+  state?: MachineState | null;
+  /** Durée de vie restante estimée (régresseur IA), en jours. */
+  rulDays?: number | null;
+}
+
+/** Predicted maintenance item (machine ordered by remaining useful life). */
+export interface MaintenanceItem {
+  id: string;
+  machine: string;
+  state: MachineState;
+  rulDays: number;
+  dueDate: string;
+  status: StatusLevel;
 }
 
 /** A single data point in a time series chart. */

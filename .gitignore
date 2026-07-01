@@ -249,3 +249,6 @@ __marimo__/
 /*/build/
 
 data/datalake/raw/
+# Fichiers du datalake et donnees generees par les scripts (regenerables, volumineux)
+data/datalake/archive/*.jsonl
+data/data/

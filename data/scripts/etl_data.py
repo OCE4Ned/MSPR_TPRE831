@@ -16,7 +16,10 @@ timestamps = pd.date_range("2026-01-01 06:00:00", periods=n, freq="5min")
 
 plant_ids = ["FR01", "FR02"]
 lines = ["L01", "L02", "L03"]
-machines = ["M01", "M02", "M03", "M04"]
+# M01-M04 -> usine FR01 (Lyon), M05-M08 -> usine ES01 (Madrid).
+# Le mapping metier (enrich_mecha_business_data.py) rattache chaque machine
+# a son usine ; il suffit donc de generer des donnees pour les 8 machines.
+machines = ["M01", "M02", "M03", "M04", "M05", "M06", "M07", "M08"]
 products = ["P001", "P002", "P003"]
 batches = ["BATCH001", "BATCH002", "BATCH003"]
 work_orders = ["WO1001", "WO1002", "WO1003"]
@@ -473,8 +476,16 @@ erp_clean.to_csv(f"{CLEAN_DIR}/erp_propre.csv", index=False)
 # MES PRODUCTION + QUALITÉ
 # ============================================================
 
+# Machines M01-M04 -> usine FR01 (performante), M05-M08 -> ES01 (plus degradee).
+# On module la production par site pour differencier TRS et taux de rebut :
+#   FR01 -> peu de rebut, peu d'arrets, cadence rapide  -> TRS eleve
+#   ES01 -> plus de rebut, plus d'arrets, cadence lente -> TRS bas
+mes_machine_ids = np.random.choice(machines, n)
+is_es = np.isin(mes_machine_ids, ["M05", "M06", "M07", "M08"])
+
 actual_qty = np.random.randint(850, 1150, n)
-scrap_qty = np.random.randint(0, 50, n)
+# Rebut : ES01 ~5-6%, FR01 ~1-2%.
+scrap_qty = np.where(is_es, np.random.randint(25, 90, n), np.random.randint(0, 30, n))
 good_qty = actual_qty - scrap_qty
 
 dimension = np.random.normal(10, 0.25, n).round(3)
@@ -482,13 +493,20 @@ tolerance_min = np.full(n, 9.5)
 tolerance_max = np.full(n, 10.5)
 is_conforming = (dimension >= tolerance_min) & (dimension <= tolerance_max)
 
-cycle_time_for_speed = np.random.uniform(40, 55, n)
+# Cadence : ES01 plus lente -> performance plus basse.
+cycle_time_for_speed = np.where(
+    is_es, np.random.uniform(48, 60, n), np.random.uniform(38, 47, n)
+)
+
+# Arrets / reglages : ES01 nettement plus eleves -> disponibilite plus basse.
+downtime_minutes = np.where(is_es, np.random.randint(30, 110, n), np.random.randint(0, 45, n))
+setup_time_minutes = np.where(is_es, np.random.randint(20, 60, n), np.random.randint(5, 30, n))
 
 mes = pd.DataFrame({
     "timestamp": timestamps,
     "plant_id": np.random.choice(plant_ids, n),
     "production_line_id": np.random.choice(lines, n),
-    "machine_id": np.random.choice(machines, n),
+    "machine_id": mes_machine_ids,
     "product_id": np.random.choice(products, n),
     "batch_id": np.random.choice(batches, n),
     "work_order_id": np.random.choice(work_orders, n),
@@ -497,8 +515,8 @@ mes = pd.DataFrame({
     "scrap_qty": scrap_qty,
     "production_speed": (actual_qty / cycle_time_for_speed).round(2),
     "machine_status": np.random.choice(["running", "stopped", "maintenance"], n, p=[0.8, 0.15, 0.05]),
-    "downtime_minutes": np.random.randint(0, 60, n),
-    "setup_time_minutes": np.random.randint(5, 45, n),
+    "downtime_minutes": downtime_minutes,
+    "setup_time_minutes": setup_time_minutes,
     "operator_id": np.random.choice(["OP01", "OP02", "OP03"], n),
 
     "inspection_id": [f"INS{i:04d}" for i in range(n)],
@@ -561,10 +579,16 @@ mes_clean.to_csv(f"{CLEAN_DIR}/mes_propre.csv", index=False)
 # ============================================================
 
 machine_profiles = {
+    # FR01 (Lyon) : parc recent, maintenance preventive -> peu de degradation.
     "M01": {"age_factor": 0.25, "base_hours": 900, "maintenance_quality": 0.85},
     "M02": {"age_factor": 0.55, "base_hours": 1250, "maintenance_quality": 0.65},
     "M03": {"age_factor": 0.40, "base_hours": 1100, "maintenance_quality": 0.75},
     "M04": {"age_factor": 0.75, "base_hours": 1500, "maintenance_quality": 0.45},
+    # ES01 (Madrid) : parc plus ancien, maintenance corrective -> plus degrade.
+    "M05": {"age_factor": 0.60, "base_hours": 1400, "maintenance_quality": 0.50},
+    "M06": {"age_factor": 0.80, "base_hours": 1600, "maintenance_quality": 0.40},
+    "M07": {"age_factor": 0.65, "base_hours": 1300, "maintenance_quality": 0.55},
+    "M08": {"age_factor": 0.50, "base_hours": 1200, "maintenance_quality": 0.60},
 }
 
 scada_periods = int(np.ceil(n / len(machines)))
