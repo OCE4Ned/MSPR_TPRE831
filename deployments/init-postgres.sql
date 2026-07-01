@@ -1,20 +1,9 @@
-CREATE USER etl_writer WITH PASSWORD '${ETL_WRITER_PASSWORD}';
-GRANT CONNECT ON DATABASE industrial_dw TO etl_writer;
-\connect industrial_dw
-GRANT USAGE, CREATE ON SCHEMA bronze, silver, gold TO etl_writer;
-GRANT INSERT, SELECT, UPDATE, DELETE ON ALL TABLES IN SCHEMA bronze, silver, gold TO etl_writer;
-ALTER DEFAULT PRIVILEGES IN SCHEMA bronze, silver, gold GRANT INSERT, SELECT, UPDATE, DELETE ON TABLES TO etl_writer;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA bronze, silver, gold TO etl_writer;
-ALTER DEFAULT PRIVILEGES IN SCHEMA bronze, silver, gold GRANT USAGE, SELECT ON SEQUENCES TO etl_writer;
-
-CREATE DATABASE airflow;
-
-\connect industrial_dw
-
+-- Schémas
 CREATE SCHEMA IF NOT EXISTS bronze;
 CREATE SCHEMA IF NOT EXISTS silver;
 CREATE SCHEMA IF NOT EXISTS gold;
 
+-- Tables bronze
 CREATE TABLE IF NOT EXISTS bronze.raw_events (
     id BIGSERIAL PRIMARY KEY,
     source_file TEXT NOT NULL,
@@ -24,6 +13,7 @@ CREATE TABLE IF NOT EXISTS bronze.raw_events (
     payload_hash TEXT NOT NULL UNIQUE
 );
 
+-- Tables silver
 CREATE TABLE IF NOT EXISTS silver.sensor_events (
     id BIGSERIAL PRIMARY KEY,
     bronze_event_id BIGINT NOT NULL REFERENCES bronze.raw_events(id),
@@ -51,6 +41,7 @@ CREATE TABLE IF NOT EXISTS silver.sensor_events (
     UNIQUE (bronze_event_id)
 );
 
+-- Tables gold (dimensions puis faits)
 CREATE TABLE IF NOT EXISTS gold.machine_health_daily (
     snapshot_date DATE NOT NULL,
     machine_id TEXT NOT NULL,
@@ -189,3 +180,13 @@ CREATE TABLE IF NOT EXISTS gold.fact_alerts (
     alert_reason TEXT,
     is_active BOOLEAN
 );
+
+GRANT CONNECT ON DATABASE industrial_dw TO etl_writer;
+GRANT USAGE, CREATE ON SCHEMA bronze, silver, gold TO etl_writer;
+GRANT INSERT, SELECT, UPDATE, DELETE ON ALL TABLES IN SCHEMA bronze, silver, gold TO etl_writer;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA bronze, silver, gold TO etl_writer;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA bronze, silver, gold
+  GRANT INSERT, SELECT, UPDATE, DELETE ON TABLES TO etl_writer;
+ALTER DEFAULT PRIVILEGES IN SCHEMA bronze, silver, gold
+  GRANT USAGE, SELECT ON SEQUENCES TO etl_writer;
