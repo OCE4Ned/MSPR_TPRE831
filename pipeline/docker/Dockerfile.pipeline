@@ -6,3 +6,10 @@ COPY docker/requirements-pipeline.txt /tmp/requirements-pipeline.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-pipeline.txt
 
 COPY . /app/pipeline
+
+# CSV de référence pour le simulator
+RUN mkdir -p /app/data/processed/business
+COPY reference_data/machine_mapping.csv /app/data/processed/business/
+COPY reference_data/parts.csv /app/data/processed/business/
+
+ENV PYTHONPATH=/app
