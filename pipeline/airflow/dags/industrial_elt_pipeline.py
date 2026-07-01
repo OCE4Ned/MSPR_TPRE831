@@ -15,7 +15,7 @@ from airflow.hooks.base import BaseHook
 
 
 DATALAKE_RAW_DIR = Path(os.getenv("AIRFLOW_VAR_DATALAKE_RAW_DIR", "/opt/airflow/data/datalake/raw"))
-POSTGRES_CONN_ID = "industrial_postgres"
+POSTGRES_CONN_ID = os.getenv("AIRFLOW_VAR_POSTGRES_CONN_ID", "industrial_dw")
 
 
 NULL_MARKERS = ["None", "none", "NULL", "null", "nan", ""]
