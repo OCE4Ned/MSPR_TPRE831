@@ -10,7 +10,7 @@ CLEAN_DIR = "data/clean"
 os.makedirs(RAW_DIR, exist_ok=True)
 os.makedirs(CLEAN_DIR, exist_ok=True)
 
-n = 1000
+n = 10000
 
 timestamps = pd.date_range("2026-01-01 06:00:00", periods=n, freq="5min")
 
@@ -70,6 +70,78 @@ def clean_with_business_rules(df):
         df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
         df["timestamp"] = df["timestamp"].interpolate(method="linear")
         df["timestamp"] = df["timestamp"].ffill().bfill()
+
+    # ==========================
+    # LOGISTIQUE
+    # ==========================
+    logistics_date_cols = [
+        "planned_delivery_date", "actual_delivery_date", "shipment_date",
+        "estimated_arrival_date", "actual_arrival_date"
+    ]
+    for col in logistics_date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+
+    for col in [
+        "supplier_id", "supplier_name", "raw_material_id", "raw_material_name",
+        "purchase_order_id", "delivery_id", "warehouse_id", "shipment_id",
+        "customer_id", "customer_region"
+    ]:
+        if col in df.columns:
+            df[col] = df[col].ffill().bfill()
+
+    for col in [
+        "received_qty", "ordered_qty", "stock_level", "safety_stock",
+        "reorder_point", "inventory_turnover", "reserved_stock_qty",
+        "available_stock_qty", "damaged_stock_qty", "shipped_qty",
+        "returned_qty", "logistics_cost"
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+            df.loc[df[col] < 0, col] = np.nan
+
+    for col in ["stock_level", "reserved_stock_qty"]:
+        if col in df.columns:
+            if "raw_material_id" in df.columns:
+                df[col] = df.groupby("raw_material_id")[col].transform(
+                    lambda values: values.interpolate(limit=3).ffill().bfill()
+                )
+            else:
+                df[col] = df[col].interpolate(limit=3).ffill().bfill()
+
+    for col in ["damaged_stock_qty", "returned_qty"]:
+        if col in df.columns:
+            df[col] = df[col].fillna(0)
+
+    if all(col in df.columns for col in ["actual_delivery_date", "planned_delivery_date"]):
+        df["supplier_delay_days"] = (
+            df["actual_delivery_date"] - df["planned_delivery_date"]
+        ).dt.days
+        df["delivery_status"] = np.select(
+            [df["actual_delivery_date"].isna(), df["supplier_delay_days"] > 0],
+            ["missing", "delayed"],
+            default="on_time"
+        )
+
+    if all(col in df.columns for col in ["actual_arrival_date", "estimated_arrival_date"]):
+        df["shipping_delay_days"] = (
+            df["actual_arrival_date"] - df["estimated_arrival_date"]
+        ).dt.days
+
+    if all(col in df.columns for col in ["stock_level", "reserved_stock_qty", "damaged_stock_qty"]):
+        df["available_stock_qty"] = (
+            df["stock_level"] - df["reserved_stock_qty"] - df["damaged_stock_qty"]
+        ).clip(lower=0)
+        df["stockout_flag"] = df["available_stock_qty"] <= 0
+
+    for col, default in {
+        "transport_type": "unknown",
+        "return_reason": "unknown",
+        "logistics_incident_flag": False,
+        "customs_delay_flag": False,
+    }.items():
+        if col in df.columns:
+            df[col] = df[col].fillna(default)
 
     # ==========================
     # IDS INDUSTRIELS
@@ -423,8 +495,12 @@ def clean_with_business_rules(df):
             df[col] = df[col].ffill().bfill()
 
     # Sécurité finale : aucune valeur manquante restante
+    controlled_null_columns = {
+        "actual_delivery_date", "actual_arrival_date",
+        "supplier_delay_days", "shipping_delay_days"
+    }
     for col in df.columns:
-        if df[col].isna().sum() > 0:
+        if col not in controlled_null_columns and df[col].isna().sum() > 0:
             if pd.api.types.is_numeric_dtype(df[col]):
                 df[col] = df[col].interpolate().ffill().bfill()
             elif pd.api.types.is_datetime64_any_dtype(df[col]):
@@ -467,6 +543,116 @@ erp_dirty.to_csv(f"{RAW_DIR}/erp_sale.csv", index=False)
 
 erp_clean = clean_with_business_rules(erp_dirty)
 erp_clean.to_csv(f"{CLEAN_DIR}/erp_propre.csv", index=False)
+
+
+# ============================================================
+# LOGISTIQUE FOURNISSEURS / STOCKS / EXPEDITIONS
+# ============================================================
+
+supplier_profiles = [
+    ("SUP001", "Aciers Rhône", "RM001", "Acier allié 42CrMo4", 0.92, "camion"),
+    ("SUP002", "Alu Iberica", "RM002", "Aluminium 7075", 0.86, "rail"),
+    ("SUP003", "Composites Europe", "RM003", "Composite carbone", 0.78, "bateau"),
+    ("SUP004", "Fluides Techniques", "RM004", "Fluide hydraulique", 0.95, "camion"),
+]
+supplier_choice = np.random.randint(0, len(supplier_profiles), n)
+supplier_data = [supplier_profiles[index] for index in supplier_choice]
+supplier_ids = np.array([row[0] for row in supplier_data])
+supplier_names = np.array([row[1] for row in supplier_data])
+material_ids = np.array([row[2] for row in supplier_data])
+material_names = np.array([row[3] for row in supplier_data])
+supplier_reliability = np.array([row[4] for row in supplier_data])
+transport_types = np.array([row[5] for row in supplier_data])
+
+order_dates = timestamps
+planned_delivery = order_dates + pd.to_timedelta(np.random.randint(2, 15, n), unit="D")
+late_days = np.where(
+    np.random.random(n) <= supplier_reliability,
+    np.random.randint(-2, 1, n),
+    np.random.randint(1, 12, n),
+)
+actual_delivery = pd.Series(planned_delivery + pd.to_timedelta(late_days, unit="D"))
+missing_delivery = np.random.random(n) < 0.025
+actual_delivery.loc[missing_delivery] = pd.NaT
+
+ordered_qty = np.random.randint(100, 1200, n)
+received_qty = np.where(
+    missing_delivery,
+    0,
+    np.maximum(0, ordered_qty - np.random.binomial(np.minimum(ordered_qty, 50), 0.08)),
+)
+safety_stock = np.random.randint(120, 300, n)
+reorder_point = safety_stock + np.random.randint(80, 250, n)
+stock_level = np.maximum(0, np.random.normal(reorder_point + 350, 180, n).round()).astype(int)
+reserved_stock = np.minimum(stock_level, np.random.randint(20, 350, n))
+damaged_stock = np.random.binomial(np.minimum(stock_level, 30), 0.04)
+available_stock = np.maximum(0, stock_level - reserved_stock - damaged_stock)
+
+shipment_date = pd.Series(order_dates + pd.to_timedelta(np.random.randint(1, 8, n), unit="D"))
+estimated_arrival = shipment_date + pd.to_timedelta(np.random.randint(1, 10, n), unit="D")
+customer_delay = np.random.choice([-1, 0, 0, 0, 1, 2, 4, 7], n)
+actual_arrival = pd.Series(estimated_arrival + pd.to_timedelta(customer_delay, unit="D"))
+missing_arrival = np.random.random(n) < 0.02
+actual_arrival.loc[missing_arrival] = pd.NaT
+shipped_qty = np.random.randint(50, 900, n)
+returned_qty = np.random.binomial(np.minimum(shipped_qty, 40), 0.035)
+
+logistics = pd.DataFrame({
+    "timestamp": order_dates,
+    "plant_id": np.random.choice(plant_ids, n),
+    "supplier_id": supplier_ids,
+    "supplier_name": supplier_names,
+    "raw_material_id": material_ids,
+    "raw_material_name": material_names,
+    "purchase_order_id": [f"PO{i:09d}" for i in range(1, n + 1)],
+    "delivery_id": [f"DEL{i:09d}" for i in range(1, n + 1)],
+    "planned_delivery_date": planned_delivery,
+    "actual_delivery_date": actual_delivery,
+    "supplier_delay_days": late_days,
+    "received_qty": received_qty,
+    "ordered_qty": ordered_qty,
+    "delivery_status": np.where(missing_delivery, "missing", np.where(late_days > 0, "delayed", "on_time")),
+    "transport_type": transport_types,
+    "logistics_incident_flag": late_days >= 5,
+    "customs_delay_flag": (transport_types == "bateau") & (late_days >= 3),
+    "warehouse_id": np.where(np.random.random(n) < 0.5, "WH_FR01", "WH_ES01"),
+    "stock_level": stock_level,
+    "safety_stock": safety_stock,
+    "reorder_point": reorder_point,
+    "stockout_flag": available_stock <= 0,
+    "inventory_turnover": np.random.uniform(3.0, 14.0, n).round(2),
+    "reserved_stock_qty": reserved_stock,
+    "available_stock_qty": available_stock,
+    "damaged_stock_qty": damaged_stock,
+    "shipment_id": [f"SHP{i:09d}" for i in range(1, n + 1)],
+    "customer_id": np.random.choice(["CUS001", "CUS002", "CUS003", "CUS004"], n),
+    "customer_region": np.random.choice(["France", "Europe du Sud", "Europe du Nord", "International"], n),
+    "shipment_date": shipment_date,
+    "estimated_arrival_date": estimated_arrival,
+    "actual_arrival_date": actual_arrival,
+    "shipping_delay_days": customer_delay,
+    "shipped_qty": shipped_qty,
+    "returned_qty": returned_qty,
+    "return_reason": np.where(
+        returned_qty > 0,
+        np.random.choice(["quality", "damaged_transport", "wrong_quantity"], n),
+        "unknown"
+    ),
+    "logistics_cost": (250 + shipped_qty * np.random.uniform(0.35, 1.2, n)).round(2),
+})
+
+logistics_dirty = add_missing_values(
+    logistics,
+    0.03,
+    exclude_columns=[
+        "timestamp", "purchase_order_id", "delivery_id", "shipment_id",
+        "actual_delivery_date", "actual_arrival_date"
+    ]
+)
+logistics_dirty.to_csv(f"{RAW_DIR}/logistique_sale.csv", index=False)
+
+logistics_clean = clean_with_business_rules(logistics_dirty)
+logistics_clean.to_csv(f"{CLEAN_DIR}/logistique_propre.csv", index=False)
 
 
 # ============================================================

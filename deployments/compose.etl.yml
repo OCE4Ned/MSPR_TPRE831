@@ -92,7 +92,7 @@ services:
       kafka:
         condition: service_healthy
     command: ["python", "pipeline/machine_stream_simulator.py"]
-    profiles: ["streaming"]
+    restart: unless-stopped
 
   kafka-datalake-consumer:
     build:
@@ -111,7 +111,7 @@ services:
       kafka:
         condition: service_healthy
     command: ["python", "pipeline/kafka_to_datalake.py"]
-    profiles: ["ingestion"]
+    restart: unless-stopped
 
   airflow-init:
     build:

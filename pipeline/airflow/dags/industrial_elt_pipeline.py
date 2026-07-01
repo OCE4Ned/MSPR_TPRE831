@@ -6,6 +6,8 @@ from datetime import datetime
 from pathlib import Path
 
 import psycopg2
+import numpy as np
+import pandas as pd
 from psycopg2.extras import execute_values
 from airflow import DAG
 from airflow.decorators import task
@@ -14,6 +16,136 @@ from airflow.hooks.base import BaseHook
 
 DATALAKE_RAW_DIR = Path(os.getenv("AIRFLOW_VAR_DATALAKE_RAW_DIR", "/opt/airflow/data/datalake/raw"))
 POSTGRES_CONN_ID = "industrial_postgres"
+
+
+NULL_MARKERS = ["None", "none", "NULL", "null", "nan", ""]
+CONTROLLED_NULL_COLUMNS = {
+    "actual_delivery_date", "actual_arrival_date",
+    "supplier_delay_days", "shipping_delay_days",
+}
+BUSINESS_LIMITS = {
+    "planned_production_qty": (1, 3000),
+    "actual_production_qty": (1, 2500),
+    "good_qty": (0, 2500),
+    "scrap_qty": (0, 500),
+    "cycle_time_sec": (20, 120),
+    "target_cycle_time_sec": (20, 120),
+    "dimension_measurement": (8, 12),
+    "Temperature_C": (0, 100),
+    "Vibration_mms": (0, 8),
+    "Sound_dB": (40, 110),
+    "Oil_Level_pct": (0, 100),
+    "Coolant_Level_pct": (0, 100),
+    "Hydraulic_Pressure_bar": (50, 200),
+    "Coolant_Flow_L_min": (0, 80),
+    "Heat_Index": (0, 120),
+    "Power_Consumption_kW": (0, 120),
+    "energy_consumption_kwh": (0, 150),
+    "compressed_air_usage": (0, 80),
+    "cooling_water_usage": (0, 60),
+    "power_peak_kw": (0, 200),
+    "Installation_Year": (1990, 2026),
+    "Remaining_Useful_Life_days": (0, 365),
+    "predicted_failure_probability": (0, 1),
+    "sensor_anomaly_score": (0, 1),
+    "repair_time_minutes": (0, 500),
+    "downtime_minutes": (0, 500),
+}
+
+
+def clean_payload_frame(frame):
+    """Equivalent SQL/Silver de clean_with_business_rules dans etl_data.py."""
+    df = frame.copy().replace(NULL_MARKERS, np.nan)
+    if "timestamp" in df:
+        df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce", utc=True)
+        df["timestamp"] = df["timestamp"].interpolate().ffill().bfill()
+
+    for col in [
+        "planned_delivery_date", "actual_delivery_date", "shipment_date",
+        "estimated_arrival_date", "actual_arrival_date"
+    ]:
+        if col in df:
+            df[col] = pd.to_datetime(df[col], errors="coerce", utc=True)
+
+    for col in ["plant_id", "factory_id", "production_line_id", "machine_id",
+                "product_id", "batch_id", "work_order_id", "supplier_id",
+                "supplier_name", "raw_material_id", "raw_material_name",
+                "purchase_order_id", "delivery_id", "warehouse_id",
+                "shipment_id", "customer_id", "customer_region"]:
+        if col in df:
+            df[col] = df[col].ffill().bfill()
+
+    numeric_cols = set(BUSINESS_LIMITS) | {
+        "production_speed", "setup_time_minutes", "tolerance_min", "tolerance_max",
+        "quality_score", "Operational_Hours", "Last_Maintenance_Days_Ago",
+        "Maintenance_History_Count", "Failure_History_Count", "Error_Codes_Last_30_Days",
+        "AI_Override_Events", "maintenance_cost", "energy_cost",
+        "received_qty", "ordered_qty", "stock_level", "safety_stock",
+        "reorder_point", "inventory_turnover", "reserved_stock_qty",
+        "available_stock_qty", "damaged_stock_qty", "shipped_qty",
+        "returned_qty", "logistics_cost",
+    }
+    for col in numeric_cols.intersection(df.columns):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+    for col, (minimum, maximum) in BUSINESS_LIMITS.items():
+        if col in df:
+            df.loc[~df[col].between(minimum, maximum), col] = np.nan
+
+    # Comme etl_data.py : interpolation par machine pour les mesures temporelles.
+    fill_numeric = [col for col in numeric_cols if col in df]
+    for col in fill_numeric:
+        if "machine_id" in df and col in BUSINESS_LIMITS:
+            df[col] = df.groupby("machine_id", dropna=False)[col].transform(
+                lambda values: values.interpolate().ffill().bfill()
+            )
+        df[col] = df[col].interpolate().ffill().bfill()
+
+    if "Error_Codes_Last_30_Days" in df:
+        df["Error_Codes_Last_30_Days"] = df["Error_Codes_Last_30_Days"].fillna(0)
+    if all(col in df for col in ["actual_production_qty", "good_qty", "scrap_qty"]):
+        df["good_qty"] = df["good_qty"].fillna(df["actual_production_qty"] - df["scrap_qty"])
+        df["scrap_qty"] = df["scrap_qty"].fillna(df["actual_production_qty"] - df["good_qty"]).fillna(0)
+        df["scrap_qty"] = df["scrap_qty"].clip(lower=0)
+        invalid_good = df["good_qty"] > df["actual_production_qty"]
+        df.loc[invalid_good, "good_qty"] = (
+            df.loc[invalid_good, "actual_production_qty"] - df.loc[invalid_good, "scrap_qty"]
+        )
+    if all(col in df for col in ["dimension_measurement", "tolerance_min", "tolerance_max"]):
+        df["is_conforming"] = df["dimension_measurement"].between(df["tolerance_min"], df["tolerance_max"])
+        if "scrap_flag" in df:
+            df["scrap_flag"] = ~df["is_conforming"]
+    if "quality_score" in df and "is_conforming" in df:
+        df["quality_score"] = df["quality_score"].fillna(
+            pd.Series(np.where(df["is_conforming"], 95, 70), index=df.index)
+        )
+
+    if all(col in df for col in ["actual_delivery_date", "planned_delivery_date"]):
+        df["supplier_delay_days"] = (
+            df["actual_delivery_date"] - df["planned_delivery_date"]
+        ).dt.days
+        df["delivery_status"] = np.select(
+            [df["actual_delivery_date"].isna(), df["supplier_delay_days"] > 0],
+            ["missing", "delayed"],
+            default="on_time",
+        )
+    if all(col in df for col in ["actual_arrival_date", "estimated_arrival_date"]):
+        df["shipping_delay_days"] = (
+            df["actual_arrival_date"] - df["estimated_arrival_date"]
+        ).dt.days
+    if all(col in df for col in ["stock_level", "reserved_stock_qty", "damaged_stock_qty"]):
+        df["damaged_stock_qty"] = df["damaged_stock_qty"].fillna(0)
+        df["available_stock_qty"] = (
+            df["stock_level"] - df["reserved_stock_qty"] - df["damaged_stock_qty"]
+        ).clip(lower=0)
+        df["stockout_flag"] = df["available_stock_qty"] <= 0
+
+    for col in df.columns:
+        if col not in CONTROLLED_NULL_COLUMNS and df[col].isna().any():
+            if pd.api.types.is_numeric_dtype(df[col]):
+                df[col] = df[col].interpolate().ffill().bfill()
+            else:
+                df[col] = df[col].ffill().bfill()
+    return df
 
 
 def get_postgres_conn():
@@ -280,6 +412,69 @@ with DAG(
         return inserted
 
     @task
+    def clean_bronze_to_silver():
+        with get_postgres_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS silver.cleaned_events (
+                        bronze_event_id BIGINT PRIMARY KEY REFERENCES bronze.raw_events(id),
+                        source_file TEXT NOT NULL,
+                        source_system TEXT NOT NULL,
+                        payload JSONB NOT NULL,
+                        cleaned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    """
+                    SELECT id, source_file, source_system, payload
+                    FROM bronze.raw_events
+                    ORDER BY source_system, id
+                    """
+                )
+                rows = cur.fetchall()
+
+                cleaned_rows = []
+                source_systems = sorted({row[2] for row in rows})
+                for source_system in source_systems:
+                    source_rows = [row for row in rows if row[2] == source_system]
+                    frame = pd.DataFrame([row[3] for row in source_rows])
+                    frame = clean_payload_frame(frame)
+                    for source_row, (_, payload_row) in zip(source_rows, frame.iterrows()):
+                        payload = {}
+                        for key, value in payload_row.items():
+                            if pd.isna(value):
+                                payload[key] = None
+                            elif isinstance(value, pd.Timestamp):
+                                payload[key] = value.isoformat()
+                            elif isinstance(value, np.generic):
+                                payload[key] = value.item()
+                            else:
+                                payload[key] = value
+                        cleaned_rows.append((source_row[0], source_row[1], source_system,
+                                             json.dumps(payload, ensure_ascii=False)))
+
+                if cleaned_rows:
+                    execute_values(
+                        cur,
+                        """
+                        INSERT INTO silver.cleaned_events
+                            (bronze_event_id, source_file, source_system, payload)
+                        VALUES %s
+                        ON CONFLICT (bronze_event_id) DO UPDATE SET
+                            source_file = EXCLUDED.source_file,
+                            source_system = EXCLUDED.source_system,
+                            payload = EXCLUDED.payload,
+                            cleaned_at = NOW()
+                        """,
+                        cleaned_rows,
+                        template="(%s, %s, %s, %s::jsonb)",
+                        page_size=5000,
+                    )
+                return len(cleaned_rows)
+
+    @task
     def transform_bronze_to_silver():
         with get_postgres_conn() as conn:
             with conn.cursor() as cur:
@@ -309,7 +504,7 @@ with DAG(
                         quality_status
                     )
                     SELECT
-                        id,
+                        bronze_event_id,
                         NULLIF(payload->>'timestamp', '')::timestamp,
                         NULLIF(payload->>'machine_id', ''),
                         CASE WHEN NULLIF(payload->>'cycle_time_sec', '') ~ '^-?[0-9]+(\\.[0-9]+)?$' AND NULLIF(payload->>'cycle_time_sec', '')::numeric BETWEEN 20 AND 120 THEN NULLIF(payload->>'cycle_time_sec', '')::numeric END,
@@ -336,12 +531,46 @@ with DAG(
                             THEN 'valid_sensor_event'
                             ELSE 'partial_sensor_event'
                         END
-                    FROM bronze.raw_events
+                    FROM silver.cleaned_events
                     WHERE source_system = 'scada_capteurs'
                     ON CONFLICT (bronze_event_id) DO NOTHING
                     """
                 )
-                return cur.rowcount
+                sensor_count = cur.rowcount
+                cur.execute(
+                    """
+                    INSERT INTO silver.logistics_events (
+                        bronze_event_id, event_ts, supplier_id, raw_material_id,
+                        warehouse_id, delivery_status, stock_level,
+                        available_stock_qty, stockout_flag, payload
+                    )
+                    SELECT
+                        bronze_event_id,
+                        NULLIF(payload->>'timestamp', '')::timestamptz,
+                        NULLIF(payload->>'supplier_id', ''),
+                        NULLIF(payload->>'raw_material_id', ''),
+                        NULLIF(payload->>'warehouse_id', ''),
+                        NULLIF(payload->>'delivery_status', ''),
+                        CASE WHEN btrim(payload->>'stock_level') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                             THEN (payload->>'stock_level')::numeric END,
+                        CASE WHEN btrim(payload->>'available_stock_qty') ~ '^-?[0-9]+(\\.[0-9]+)?$'
+                             THEN (payload->>'available_stock_qty')::numeric END,
+                        CASE WHEN NULLIF(btrim(payload->>'stockout_flag'), '') IS NULL THEN NULL
+                             ELSE lower(btrim(payload->>'stockout_flag')) IN ('1','true','t','yes','y','oui') END,
+                        payload
+                    FROM silver.cleaned_events
+                    WHERE source_system = 'logistique'
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        event_ts = EXCLUDED.event_ts,
+                        delivery_status = EXCLUDED.delivery_status,
+                        stock_level = EXCLUDED.stock_level,
+                        available_stock_qty = EXCLUDED.available_stock_qty,
+                        stockout_flag = EXCLUDED.stockout_flag,
+                        payload = EXCLUDED.payload,
+                        transformed_at = NOW()
+                    """
+                )
+                return sensor_count + cur.rowcount
 
     @task
     def build_gold_machine_health():
@@ -415,12 +644,21 @@ with DAG(
                 f"ELSE lower(btrim(payload->>'{field}')) IN ('1','true','t','yes','y','oui') END"
             )
 
+        def _ts(field):
+            return (
+                f"CASE WHEN payload->>'{field}' ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}' "
+                f"THEN (payload->>'{field}')::timestamptz END"
+            )
+
         inserted = {
             "fact_production": 0,
             "fact_quality": 0,
             "fact_maintenance": 0,
             "fact_energy": 0,
             "fact_alerts": 0,
+            "fact_supplier_delivery": 0,
+            "fact_inventory_snapshot": 0,
+            "fact_customer_shipment": 0,
         }
 
         with get_postgres_conn() as conn:
@@ -432,12 +670,13 @@ with DAG(
                     CREATE TEMP TABLE _stg ON COMMIT DROP AS
                     WITH base AS (
                         SELECT
-                            id AS bronze_event_id,
+                            bronze_event_id,
                             source_system,
                             source_file,
                             payload,
                             (right(source_file, 13) = '_business.csv'
-                             OR source_file = 'industrial_realtime_stream') AS is_biz,
+                             OR source_file = 'industrial_realtime_stream'
+                             OR source_system = 'logistique') AS is_biz,
                             CASE WHEN payload->>'timestamp' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
                                  THEN NULLIF(btrim(payload->>'timestamp'), '')::timestamp END AS ts,
                             lower(NULLIF(btrim(payload->>'shift'), '')) AS shift_txt,
@@ -449,10 +688,11 @@ with DAG(
                             COALESCE(NULLIF(btrim(payload->>'defect_type'), ''), 'no_defect') AS defect_type,
                             COALESCE(NULLIF(btrim(payload->>'defect_category'), ''), 'none') AS defect_category,
                             COALESCE(NULLIF(btrim(payload->>'defect_severity'), ''), 'minor') AS defect_severity
-                        FROM bronze.raw_events
+                        FROM silver.cleaned_events
                         WHERE source_system IN (
                             'mes', 'gmao', 'energie', 'scada_capteurs', 'erp',
-                            'machine_mapping', 'factories', 'production_lines', 'parts'
+                            'machine_mapping', 'factories', 'production_lines', 'parts',
+                            'logistique'
                         )
                     ),
                     derived AS (
@@ -578,6 +818,56 @@ with DAG(
                     SELECT defect_id, max(defect_type), max(defect_category), max(defect_severity)
                     FROM _stg GROUP BY defect_id
                     ON CONFLICT (defect_id) DO NOTHING
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_supplier (supplier_id, supplier_name)
+                    SELECT NULLIF(btrim(payload->>'supplier_id'), ''),
+                           max(NULLIF(btrim(payload->>'supplier_name'), ''))
+                    FROM _stg
+                    WHERE source_system = 'logistique'
+                      AND NULLIF(btrim(payload->>'supplier_id'), '') IS NOT NULL
+                    GROUP BY NULLIF(btrim(payload->>'supplier_id'), '')
+                    ON CONFLICT (supplier_id) DO UPDATE SET supplier_name = EXCLUDED.supplier_name
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_raw_material (raw_material_id, raw_material_name, supplier_id)
+                    SELECT NULLIF(btrim(payload->>'raw_material_id'), ''),
+                           max(NULLIF(btrim(payload->>'raw_material_name'), '')),
+                           max(NULLIF(btrim(payload->>'supplier_id'), ''))
+                    FROM _stg
+                    WHERE source_system = 'logistique'
+                      AND NULLIF(btrim(payload->>'raw_material_id'), '') IS NOT NULL
+                    GROUP BY NULLIF(btrim(payload->>'raw_material_id'), '')
+                    ON CONFLICT (raw_material_id) DO UPDATE SET
+                        raw_material_name = EXCLUDED.raw_material_name,
+                        supplier_id = EXCLUDED.supplier_id
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_warehouse (warehouse_id, plant_id)
+                    SELECT NULLIF(btrim(payload->>'warehouse_id'), ''), max(plant_id)
+                    FROM _stg
+                    WHERE source_system = 'logistique'
+                      AND NULLIF(btrim(payload->>'warehouse_id'), '') IS NOT NULL
+                    GROUP BY NULLIF(btrim(payload->>'warehouse_id'), '')
+                    ON CONFLICT (warehouse_id) DO UPDATE SET plant_id = EXCLUDED.plant_id
+                    """
+                )
+                cur.execute(
+                    """
+                    INSERT INTO gold.dim_customer (customer_id, customer_region)
+                    SELECT NULLIF(btrim(payload->>'customer_id'), ''),
+                           max(NULLIF(btrim(payload->>'customer_region'), ''))
+                    FROM _stg
+                    WHERE source_system = 'logistique'
+                      AND NULLIF(btrim(payload->>'customer_id'), '') IS NOT NULL
+                    GROUP BY NULLIF(btrim(payload->>'customer_id'), '')
+                    ON CONFLICT (customer_id) DO UPDATE SET customer_region = EXCLUDED.customer_region
                     """
                 )
 
@@ -706,6 +996,84 @@ with DAG(
                 inserted["fact_energy"] = cur.rowcount
 
                 cur.execute(
+                    f"""
+                    INSERT INTO gold.fact_supplier_delivery (
+                        bronze_event_id, date_id, supplier_id, raw_material_id, warehouse_id,
+                        purchase_order_id, delivery_id, planned_delivery_date,
+                        actual_delivery_date, supplier_delay_days, ordered_qty, received_qty,
+                        delivery_status, transport_type, logistics_incident_flag, customs_delay_flag
+                    )
+                    SELECT bronze_event_id, date_id, {_txt('supplier_id')}, {_txt('raw_material_id')},
+                        {_txt('warehouse_id')}, {_txt('purchase_order_id')}, {_txt('delivery_id')},
+                        {_ts('planned_delivery_date')}, {_ts('actual_delivery_date')},
+                        {_int('supplier_delay_days')}, {_num('ordered_qty')}, {_num('received_qty')},
+                        {_txt('delivery_status')}, COALESCE({_txt('transport_type')}, 'unknown'),
+                        COALESCE({_bool('logistics_incident_flag')}, FALSE),
+                        COALESCE({_bool('customs_delay_flag')}, FALSE)
+                    FROM _stg WHERE source_system = 'logistique' AND is_biz
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        actual_delivery_date = EXCLUDED.actual_delivery_date,
+                        supplier_delay_days = EXCLUDED.supplier_delay_days,
+                        received_qty = EXCLUDED.received_qty,
+                        delivery_status = EXCLUDED.delivery_status,
+                        logistics_incident_flag = EXCLUDED.logistics_incident_flag,
+                        customs_delay_flag = EXCLUDED.customs_delay_flag
+                    """
+                )
+                inserted["fact_supplier_delivery"] = cur.rowcount
+
+                cur.execute(
+                    f"""
+                    INSERT INTO gold.fact_inventory_snapshot (
+                        bronze_event_id, date_id, warehouse_id, raw_material_id,
+                        stock_level, safety_stock, reorder_point, stockout_flag,
+                        inventory_turnover, reserved_stock_qty, available_stock_qty,
+                        damaged_stock_qty
+                    )
+                    SELECT bronze_event_id, date_id, {_txt('warehouse_id')}, {_txt('raw_material_id')},
+                        {_num('stock_level')}, {_num('safety_stock')}, {_num('reorder_point')},
+                        {_bool('stockout_flag')}, {_num('inventory_turnover')},
+                        {_num('reserved_stock_qty')}, {_num('available_stock_qty')},
+                        COALESCE({_num('damaged_stock_qty')}, 0)
+                    FROM _stg WHERE source_system = 'logistique' AND is_biz
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        stock_level = EXCLUDED.stock_level,
+                        stockout_flag = EXCLUDED.stockout_flag,
+                        inventory_turnover = EXCLUDED.inventory_turnover,
+                        reserved_stock_qty = EXCLUDED.reserved_stock_qty,
+                        available_stock_qty = EXCLUDED.available_stock_qty,
+                        damaged_stock_qty = EXCLUDED.damaged_stock_qty
+                    """
+                )
+                inserted["fact_inventory_snapshot"] = cur.rowcount
+
+                cur.execute(
+                    f"""
+                    INSERT INTO gold.fact_customer_shipment (
+                        bronze_event_id, date_id, customer_id, warehouse_id, shipment_id,
+                        shipment_date, estimated_arrival_date, actual_arrival_date,
+                        shipping_delay_days, shipped_qty, returned_qty, return_reason,
+                        logistics_cost
+                    )
+                    SELECT bronze_event_id, date_id, {_txt('customer_id')}, {_txt('warehouse_id')},
+                        {_txt('shipment_id')}, {_ts('shipment_date')},
+                        {_ts('estimated_arrival_date')}, {_ts('actual_arrival_date')},
+                        {_int('shipping_delay_days')}, {_num('shipped_qty')},
+                        COALESCE({_num('returned_qty')}, 0),
+                        COALESCE({_txt('return_reason')}, 'unknown'), {_num('logistics_cost')}
+                    FROM _stg WHERE source_system = 'logistique' AND is_biz
+                    ON CONFLICT (bronze_event_id) DO UPDATE SET
+                        actual_arrival_date = EXCLUDED.actual_arrival_date,
+                        shipping_delay_days = EXCLUDED.shipping_delay_days,
+                        shipped_qty = EXCLUDED.shipped_qty,
+                        returned_qty = EXCLUDED.returned_qty,
+                        return_reason = EXCLUDED.return_reason,
+                        logistics_cost = EXCLUDED.logistics_cost
+                    """
+                )
+                inserted["fact_customer_shipment"] = cur.rowcount
+
+                cur.execute(
                     """
                     INSERT INTO gold.fact_alerts (
                         bronze_event_id, date_id, machine_id, alert_type,
@@ -750,9 +1118,10 @@ with DAG(
         return inserted
 
     bronze = load_bronze_from_datalake()
+    cleaned = clean_bronze_to_silver()
     silver = transform_bronze_to_silver()
     health = build_gold_machine_health()
     star = build_gold_star_schema()
 
-    bronze >> [silver, star]
+    bronze >> cleaned >> [silver, star]
     silver >> health
