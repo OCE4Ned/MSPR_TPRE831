@@ -6,6 +6,9 @@ networks:
   app:
     external: true
     name: mecha_app
+  etl:
+    external: true
+    name: mecha-etl_etl
 
 volumes:
   prometheus_data:
@@ -86,3 +89,11 @@ services:
     volumes:
       - ./statsd_mapping.yml:/tmp/statsd_mapping.yml:ro
     networks: [app, etl]
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    restart: unless-stopped
+    command:
+      - '--kafka.server=kafka:9092'
+      - '--web.listen-address=:9308'
+    networks: [monitoring, app, etl]
