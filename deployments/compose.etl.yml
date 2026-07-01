@@ -111,6 +111,10 @@ services:
       AIRFLOW_VAR_DATALAKE_RAW_DIR: /opt/airflow/data/datalake/raw
       AIRFLOW_VAR_POSTGRES_CONN_ID: ${AIRFLOW_VAR_POSTGRES_CONN_ID}
       AIRFLOW_CONN_INDUSTRIAL_DW: postgres://etl_writer:${ETL_WRITER_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      AIRFLOW__METRICS__STATSD_ON: "true"
+      AIRFLOW__METRICS__STATSD_HOST: statsd-exporter
+      AIRFLOW__METRICS__STATSD_PORT: "9125"
+      AIRFLOW__METRICS__STATSD_PREFIX: airflow
     volumes:
       - /srv/mecha/data:/opt/airflow/data
     depends_on:

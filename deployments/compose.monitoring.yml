@@ -6,6 +6,9 @@ networks:
   app:
     external: true
     name: mecha_app
+  etl:
+    external: true
+    name: mecha-etl_etl
 
 volumes:
   prometheus_data:
@@ -75,3 +78,22 @@ services:
     environment:
       DATA_SOURCE_NAME: "postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable"
     networks: [monitoring, app]
+
+  statsd-exporter:
+    image: prom/statsd-exporter:v0.27.1
+    restart: unless-stopped
+    command:
+      - '--statsd.mapping-config=/tmp/statsd_mapping.yml'
+      - '--statsd.listen-udp=:9125'
+      - '--web.listen-address=:9102'
+    volumes:
+      - ./statsd_mapping.yml:/tmp/statsd_mapping.yml:ro
+    networks: [app, etl]
+
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.8.0
+    restart: unless-stopped
+    command:
+      - '--kafka.server=kafka:9092'
+      - '--web.listen-address=:9308'
+    networks: [monitoring, app, etl]
