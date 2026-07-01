@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useNavigate } from "react-router";
 import type { Route } from "./+types/site";
 import { PageHeading } from "~/components/PageHeading";
 import { KpiCard } from "~/components/KpiCard";
@@ -9,13 +9,12 @@ import { RiskMachineItem } from "~/components/RiskMachineItem";
 import { AlertItem } from "~/components/AlertItem";
 import { IaReadyCard } from "~/components/IaReadyCard";
 import { FactorySelector } from "~/components/FactorySelector";
-import { factories, factoriesById, DEFAULT_FACTORY_ID } from "~/data/factories";
-import { getSiteData } from "~/data/site";
-import { LAST_UPDATE } from "~/data/group";
+import { statusColor } from "~/lib/format";
+import { getSites, getSiteAnalytics } from "~/lib/api";
 
 export function meta(_: Route.MetaArgs) {
   return [
-    { title: "MECHA – Vue Site" },
+    { title: "MECHA - Vue Site" },
     {
       name: "description",
       content: "Supervision détaillée d'une usine MECHA en temps réel.",
@@ -23,19 +22,64 @@ export function meta(_: Route.MetaArgs) {
   ];
 }
 
-export default function SiteView() {
-  const [factoryId, setFactoryId] = useState(DEFAULT_FACTORY_ID);
-  const factory = factoriesById[factoryId];
-  const site = useMemo(() => getSiteData(factoryId), [factoryId]);
+/**
+ * Charge les donnees du site depuis le backend (schema gold).
+ * Le site affiche est choisi par le parametre d'URL `?site=`, sinon le
+ * premier site disponible. En cas de backend injoignable, `online` passe a
+ * false et la page affiche un bandeau d'avertissement.
+ */
+export async function loader({ request }: Route.LoaderArgs) {
+  const requested = new URL(request.url).searchParams.get("site");
+  try {
+    const sites = await getSites();
+    if (sites.length === 0) {
+      return { online: true as const, sites, site: null };
+    }
+    const selectedId =
+      requested && sites.some((s) => s.id === requested) ? requested : sites[0].id;
+    const site = await getSiteAnalytics(selectedId);
+    return { online: true as const, sites, site };
+  } catch {
+    return { online: false as const, sites: [], site: null };
+  }
+}
+
+const LAST_UPDATE = new Intl.DateTimeFormat("fr-FR", {
+  dateStyle: "short",
+  timeStyle: "short",
+}).format(new Date());
+
+export default function SiteView({ loaderData }: Route.ComponentProps) {
+  const { online, sites, site } = loaderData;
+  const navigate = useNavigate();
+
+  if (!online || !site) {
+    return (
+      <Card className="border-status-crit/30 bg-status-crit/5 p-6">
+        <SectionTitle className="mb-2">Backend indisponible</SectionTitle>
+        <p className="text-sm text-slate-600">
+          Impossible de joindre l'API de supervision. Vérifiez que le backend
+          est lancé (uvicorn, port 8000) et que la base <code>industrial_dw</code>{" "}
+          est démarrée.
+        </p>
+      </Card>
+    );
+  }
+
+  const factory = site.factory;
 
   return (
     <div className="space-y-6">
       <PageHeading
-        title="Pilotage industriel – Vue Site"
-        subtitle="Suivi temps réel – 4 lignes de production – 18 machines"
+        title="Pilotage industriel - Vue Site"
+        subtitle={`${factory.name} - ${site.lines.length} lignes - ${site.riskMachines.length} machines suivies`}
         lastUpdate={LAST_UPDATE}
         action={
-          <FactorySelector factories={factories} selected={factory} onSelect={setFactoryId} />
+          <FactorySelector
+            factories={sites}
+            selected={factory}
+            onSelect={(id) => navigate(`?site=${encodeURIComponent(id)}`)}
+          />
         }
       />
 
@@ -118,6 +162,47 @@ export default function SiteView() {
         </div>
       </Card>
 
+      {/* Predictive maintenance plan */}
+      {site.maintenancePlan.length > 0 && (
+        <Card className="p-5">
+          <SectionTitle
+            subtitle="Machines classées par durée de vie restante estimée (modèle RUL)"
+            className="mb-4"
+            icon={
+              <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 7V3m8 4V3M4 11h16M5 5h14a1 1 0 011 1v13a1 1 0 01-1 1H5a1 1 0 01-1-1V6a1 1 0 011-1z" />
+              </svg>
+            }
+          >
+            Maintenance prévisionnelle
+          </SectionTitle>
+          <div className="space-y-2">
+            {site.maintenancePlan.map((m) => (
+              <div
+                key={m.id}
+                className="flex items-center justify-between gap-3 rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusColor[m.status].dot}`} />
+                  <span className="font-medium text-slate-800">{m.machine}</span>
+                  {m.state === "at_risk" && (
+                    <span className="rounded-full bg-status-crit/10 px-2 py-0.5 text-[11px] font-medium text-status-crit ring-1 ring-inset ring-status-crit/30">
+                      À risque
+                    </span>
+                  )}
+                </div>
+                <div className="text-right">
+                  <div className={`text-sm font-semibold ${statusColor[m.status].text}`}>
+                    {m.rulDays} j restants
+                  </div>
+                  <div className="text-xs text-slate-400">Échéance estimée&nbsp;: {m.dueDate}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       {/* Site alerts */}
       <Card className="p-5">
         <SectionTitle className="mb-4">Alertes du site</SectionTitle>
@@ -138,7 +223,6 @@ export default function SiteView() {
       {/* IA-ready indicators */}
       <Card className="border-brand-100 bg-brand-50/40 p-5">
         <SectionTitle
-          subtitle="Préparation à l'intégration de l'intelligence artificielle"
           className="mb-4"
           icon={
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2}>

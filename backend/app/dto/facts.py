@@ -1,7 +1,7 @@
 """Modeles SQLModel des tables de faits (couche gold).
 
-Les tables FACT_* n'ont pas de cle naturelle simple : on ajoute une cle
-technique auto-incrementee `id` (surrogate key, standard en modele en etoile).
+Les tables gold.fact_* utilisent `bronze_event_id` comme cle primaire :
+c'est l'identifiant de l'evenement bronze a l'origine de la ligne de fait.
 Les colonnes *_id sont des cles etrangeres vers les dimensions, indexees
 pour les filtres.
 """
@@ -10,11 +10,12 @@ from sqlmodel import Field, SQLModel
 
 
 class ProductionFact(SQLModel, table=True):
-    """FACT_PRODUCTION - mesures de production / TRS."""
+    """gold.fact_production - mesures de production / TRS."""
 
-    __tablename__ = "FACT_PRODUCTION"
+    __tablename__ = "fact_production"
+    __table_args__ = {"schema": "gold"}
 
-    id: int | None = Field(default=None, primary_key=True)
+    bronze_event_id: int | None = Field(default=None, primary_key=True)
     date_id: int = Field(index=True)
     plant_id: str = Field(index=True)
     production_line_id: str = Field(index=True)
@@ -38,11 +39,12 @@ class ProductionFact(SQLModel, table=True):
 
 
 class QualityFact(SQLModel, table=True):
-    """FACT_QUALITY - controles qualite."""
+    """gold.fact_quality - controles qualite."""
 
-    __tablename__ = "FACT_QUALITY"
+    __tablename__ = "fact_quality"
+    __table_args__ = {"schema": "gold"}
 
-    id: int | None = Field(default=None, primary_key=True)
+    bronze_event_id: int | None = Field(default=None, primary_key=True)
     date_id: int = Field(index=True)
     machine_id: str = Field(index=True)
     product_id: str = Field(index=True)
@@ -57,11 +59,12 @@ class QualityFact(SQLModel, table=True):
 
 
 class MaintenanceFact(SQLModel, table=True):
-    """FACT_MAINTENANCE - evenements de maintenance."""
+    """gold.fact_maintenance - evenements de maintenance."""
 
-    __tablename__ = "FACT_MAINTENANCE"
+    __tablename__ = "fact_maintenance"
+    __table_args__ = {"schema": "gold"}
 
-    id: int | None = Field(default=None, primary_key=True)
+    bronze_event_id: int | None = Field(default=None, primary_key=True)
     date_id: int = Field(index=True)
     machine_id: str = Field(index=True)
     maintenance_event_id: str
@@ -77,11 +80,12 @@ class MaintenanceFact(SQLModel, table=True):
 
 
 class EnergyFact(SQLModel, table=True):
-    """FACT_ENERGY - consommation energetique."""
+    """gold.fact_energy - consommation energetique."""
 
-    __tablename__ = "FACT_ENERGY"
+    __tablename__ = "fact_energy"
+    __table_args__ = {"schema": "gold"}
 
-    id: int | None = Field(default=None, primary_key=True)
+    bronze_event_id: int | None = Field(default=None, primary_key=True)
     date_id: int = Field(index=True)
     machine_id: str = Field(index=True)
     energy_consumption_kwh: float
@@ -93,11 +97,12 @@ class EnergyFact(SQLModel, table=True):
 
 
 class AlertFact(SQLModel, table=True):
-    """FACT_ALERTS - alertes machines."""
+    """gold.fact_alerts - alertes machines."""
 
-    __tablename__ = "FACT_ALERTS"
+    __tablename__ = "fact_alerts"
+    __table_args__ = {"schema": "gold"}
 
-    id: int | None = Field(default=None, primary_key=True)
+    bronze_event_id: int | None = Field(default=None, primary_key=True)
     date_id: int = Field(index=True)
     machine_id: str = Field(index=True)
     alert_type: str

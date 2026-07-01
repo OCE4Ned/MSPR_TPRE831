@@ -23,7 +23,6 @@ export function PageHeading({ title, subtitle, lastUpdate, action }: PageHeading
         <p>
           Dernière mise à jour&nbsp;: <span className="font-medium text-slate-500">{lastUpdate}</span>
         </p>
-        <p className="mt-0.5 italic">Maquette statique – Vision cible – PoC MECHA</p>
       </div>
     </div>
   );

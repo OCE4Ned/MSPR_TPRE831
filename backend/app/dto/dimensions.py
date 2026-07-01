@@ -13,9 +13,10 @@ from sqlmodel import Field, SQLModel
 
 
 class Plant(SQLModel, table=True):
-    """DIM_PLANT - usine."""
+    """gold.dim_plant - usine."""
 
-    __tablename__ = "DIM_PLANT"
+    __tablename__ = "dim_plant"
+    __table_args__ = {"schema": "gold"}
 
     plant_id: str = Field(primary_key=True)
     plant_name: str
@@ -23,9 +24,10 @@ class Plant(SQLModel, table=True):
 
 
 class Line(SQLModel, table=True):
-    """DIM_LINE - ligne de production."""
+    """gold.dim_line - ligne de production."""
 
-    __tablename__ = "DIM_LINE"
+    __tablename__ = "dim_line"
+    __table_args__ = {"schema": "gold"}
 
     production_line_id: str = Field(primary_key=True)
     plant_id: str = Field(index=True)
@@ -33,9 +35,10 @@ class Line(SQLModel, table=True):
 
 
 class Shift(SQLModel, table=True):
-    """DIM_SHIFT - equipe / poste de travail."""
+    """gold.dim_shift - equipe / poste de travail."""
 
-    __tablename__ = "DIM_SHIFT"
+    __tablename__ = "dim_shift"
+    __table_args__ = {"schema": "gold"}
 
     shift_id: str = Field(primary_key=True)
     shift_name: str
@@ -44,9 +47,10 @@ class Shift(SQLModel, table=True):
 
 
 class Product(SQLModel, table=True):
-    """DIM_PRODUCT - produit fabrique."""
+    """gold.dim_product - produit fabrique."""
 
-    __tablename__ = "DIM_PRODUCT"
+    __tablename__ = "dim_product"
+    __table_args__ = {"schema": "gold"}
 
     product_id: str = Field(primary_key=True)
     product_name: str
@@ -54,9 +58,10 @@ class Product(SQLModel, table=True):
 
 
 class DateDim(SQLModel, table=True):
-    """DIM_DATE - dimension calendaire."""
+    """gold.dim_date - dimension calendaire."""
 
-    __tablename__ = "DIM_DATE"
+    __tablename__ = "dim_date"
+    __table_args__ = {"schema": "gold"}
 
     date_id: int = Field(primary_key=True)
     date: date_type
@@ -67,9 +72,10 @@ class DateDim(SQLModel, table=True):
 
 
 class Defect(SQLModel, table=True):
-    """DIM_DEFECT - typologie de defaut qualite."""
+    """gold.dim_defect - typologie de defaut qualite."""
 
-    __tablename__ = "DIM_DEFECT"
+    __tablename__ = "dim_defect"
+    __table_args__ = {"schema": "gold"}
 
     defect_id: str = Field(primary_key=True)
     defect_type: str
@@ -78,9 +84,10 @@ class Defect(SQLModel, table=True):
 
 
 class Machine(SQLModel, table=True):
-    """DIM_MACHINE - machine de production."""
+    """gold.dim_machine - machine de production."""
 
-    __tablename__ = "DIM_MACHINE"
+    __tablename__ = "dim_machine"
+    __table_args__ = {"schema": "gold"}
 
     machine_id: str = Field(primary_key=True)
     production_line_id: str = Field(index=True)

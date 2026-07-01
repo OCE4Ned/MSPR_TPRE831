@@ -6,17 +6,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from app.db import init_db
 from app.middleware import ALLOWED_ORIGINS, OriginCheckMiddleware
-from app.routers import dimensions, facts, predictions
+from app.routers import analytics, dimensions, facts, predictions
 
 from prometheus_fastapi_instrumentator import Instrumentator
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Au demarrage : cree les tables (vides) si elles n'existent pas encore.
-    init_db()
+    # Le schema `gold` est gere par la pipeline (init-postgres.sql) :
+    # le backend se contente de lire les tables existantes.
     yield
 
 
@@ -40,6 +39,7 @@ app.add_middleware(
 app.include_router(dimensions.router)
 app.include_router(facts.router)
 app.include_router(predictions.router)
+app.include_router(analytics.router)
 
 
 @app.get("/")
